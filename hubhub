@@ -1,1385 +1,1827 @@
--- Made by ban_thid
--- 汉化 + 去掉 getcustomasset 卡死行
 
-local Players = game:GetService("Players")
+
+local repo = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+
+local Options = Library.Options
+local Toggles = Library.Toggles
+
+Library.ForceCheckbox = false
+Library.ShowToggleFrameInKeybinds = true
+
+local Window = Library:CreateWindow({
+	Title = "Bloxstrike Mobile",
+	Footer = "Mobile Edition",
+	NotifySide = "Right",
+	ShowCustomCursor = true,
+})
+
+local Tabs = {
+	Combat = Window:AddTab("战斗", "crosshair"),
+	Ragebot = Window:AddTab("Ragebot", "skull"),
+	Skins = Window:AddTab("皮肤", "swords"),
+	Visuals = Window:AddTab("视觉", "eye"),
+	["UI Settings"] = Window:AddTab("界面设置", "settings"),
+}
+
+-- ============================================================
+-- 服务
+-- ============================================================
+local RS = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
+local CAS = game:GetService("ContextActionService")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
 local UserInputService = game:GetService("UserInputService")
-local AvatarEditorService = game:GetService("AvatarEditorService")
+local TextService = game:GetService("TextService")
+local CoreGui = game:GetService("CoreGui")
 local HttpService = game:GetService("HttpService")
 
-local AutoSavedOutfit = nil
-
-local SETTINGS_FILE = "RobCatalogSettings.json"
-local OUTFITS_FILE = "RobCatalogOutfits.json"
-
-local Settings = {
-	AutoLoad = true
-}
-
-local SavedOutfits = {}
-
-if isfile and isfile(SETTINGS_FILE) then
-	pcall(function()
-		Settings = HttpService:JSONDecode(readfile(SETTINGS_FILE))
-	end)
-end
-
-if isfile and isfile(OUTFITS_FILE) then
-	pcall(function()
-		SavedOutfits = HttpService:JSONDecode(readfile(OUTFITS_FILE))
-	end)
-end
-
-local function SaveSettings()
-	if writefile then
-		writefile(SETTINGS_FILE, HttpService:JSONEncode(Settings))
-	end
-end
-
-local function SaveOutfits()
-	if writefile then
-		writefile(OUTFITS_FILE, HttpService:JSONEncode(SavedOutfits))
-	end
-end
-
 local player = Players.LocalPlayer
-local gui = Instance.new("ScreenGui")
-gui.Name = "Rob目录装扮工坊"
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
-gui.Parent = player.PlayerGui
+local camera = workspace.CurrentCamera
 
-local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0.95, 0, 0.9, 0)
-frame.Position = UDim2.new(0.025, 0, 0.05, 0)
-frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-frame.BorderSizePixel = 0
-frame.Active = true
-frame.Visible = true
-frame.Parent = gui
+-- ============================================================
+-- 基础函数
+-- ============================================================
+local CharactersFolder = workspace:WaitForChild("Characters", 10)
+local getTFolder = function() return CharactersFolder:FindFirstChild("Terrorists") end
+local getCTFolder = function() return CharactersFolder:FindFirstChild("Counter-Terrorists") end
 
-local corner = Instance.new("UICorner", frame)
-corner.CornerRadius = UDim.new(0, 8)
+local isAlive = function()
+	local t, ct = getTFolder(), getCTFolder()
+	return (t and t:FindFirstChild(player.Name)) or (ct and ct:FindFirstChild(player.Name))
+end
 
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 0, 44)
-title.Position = UDim2.new(0, 0, 0, 0)
-title.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-title.Text = "Rob 目录装扮工坊"
-title.Font = Enum.Font.GothamBold
-title.TextSize = 22
-title.TextColor3 = Color3.fromRGB(255, 255, 255)
-title.Parent = frame
+local getEnemyFolder = function()
+	if not isAlive() then return nil end
+	local t, ct = getTFolder(), getCTFolder()
+	if t and t:FindFirstChild(player.Name) then return ct end
+	if ct and ct:FindFirstChild(player.Name) then return t end
+	return nil
+end
 
-local titleCorner = Instance.new("UICorner", title)
-titleCorner.CornerRadius = UDim.new(0, 8)
+local wallCheckParams = RaycastParams.new()
+wallCheckParams.FilterType = Enum.RaycastFilterType.Exclude
 
-local closeBtn = Instance.new("TextButton")
-closeBtn.Text = "✕"
-closeBtn.Size = UDim2.new(0, 44, 1, 0)
-closeBtn.Position = UDim2.new(1, -44, 0, 0)
-closeBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-closeBtn.Font = Enum.Font.GothamBold
-closeBtn.TextSize = 20
-closeBtn.Parent = title
+local IsVisible = function(p)
+	if not p then return false end
+	local c = player.Character
+	if not c then return false end
+	local h = c:FindFirstChild("Head")
+	if not h then return false end
+	local el = {c}
+	if camera then table.insert(el, camera) end
+	wallCheckParams.FilterDescendantsInstances = el
+	local r = Workspace:Raycast(h.Position, (p.Position - h.Position).Unit * 1000, wallCheckParams)
+	if r then return r.Instance:IsDescendantOf(p.Parent) end
+	return true
+end
 
-local closeCorner = Instance.new("UICorner", closeBtn)
-closeCorner.CornerRadius = UDim.new(0, 6)
+local function isEnemy(plr)
+	if plr == player then return false end
+	if plr.Team and player.Team then return plr.Team ~= player.Team end
+	local mc = player.Character
+	local tc = plr.Character
+	if not mc or not tc or not mc.Parent or not tc.Parent then return false end
+	return mc.Parent.Name ~= tc.Parent.Name
+end
 
-local searchBar = Instance.new("TextBox")
-searchBar.Size = UDim2.new(0.72, 0, 0, 30)
-searchBar.Position = UDim2.new(0.12, 0, 0, 50)
-searchBar.PlaceholderText = "搜索目录物品..."
-searchBar.Text = ""
-searchBar.TextColor3 = Color3.fromRGB(255, 255, 255)
-searchBar.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-searchBar.Font = Enum.Font.Gotham
-searchBar.TextSize = 14
-searchBar.Parent = frame
+-- ============================================================
+-- 工具类
+-- ============================================================
+local Cleaner = {}
+Cleaner.__index = Cleaner
+function Cleaner.new() return setmetatable({ tasks = {} }, Cleaner) end
+function Cleaner:Give(fn) table.insert(self.tasks, fn) end
+function Cleaner:Cleanup()
+	for _, fn in ipairs(self.tasks) do pcall(fn) end
+	self.tasks = {}
+end
 
-local searchCorner = Instance.new("UICorner", searchBar)
-searchCorner.CornerRadius = UDim.new(0, 6)
+local ErrorHandler = {}
+ErrorHandler.__index = ErrorHandler
+function ErrorHandler.new() return setmetatable({}, ErrorHandler) end
+function ErrorHandler:Connect(event, name, fn)
+	local conn = event:Connect(fn)
+	return function() conn:Disconnect() end
+end
+function ErrorHandler:Spawn(name, fn) task.spawn(fn) end
 
-local clearSearchBtn = Instance.new("TextButton")
-clearSearchBtn.Text = "✖"
-clearSearchBtn.Size = UDim2.new(0, 30, 0, 30)
-clearSearchBtn.Position = UDim2.new(0.88, -30, 0, 50)
-clearSearchBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-clearSearchBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-clearSearchBtn.Font = Enum.Font.GothamBold
-clearSearchBtn.TextSize = 16
-clearSearchBtn.Parent = frame
+local globals = {}
+function globals:GetPlayer() return player end
+function globals:IsAlive() return isAlive() and player.Character or nil end
+function globals:GetCamera() return workspace.CurrentCamera end
 
-local clearSearchCorner = Instance.new("UICorner", clearSearchBtn)
-clearSearchCorner.CornerRadius = UDim.new(0, 6)
-
-local scroll = Instance.new("ScrollingFrame")
-scroll.Size = UDim2.new(0.72, 0, 1, -132)
-scroll.Position = UDim2.new(0.27, 0, 0, 128)
-scroll.BackgroundTransparency = 1
-scroll.ScrollBarThickness = 6
-scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-scroll.Parent = frame
-
-local wearingFrame = Instance.new("Frame")
-wearingFrame.Size = UDim2.new(0.24, 0, 1, -132)
-wearingFrame.Position = UDim2.new(0.01, 0, 0, 128)
-wearingFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-wearingFrame.Parent = frame
-Instance.new("UICorner", wearingFrame)
-
-local wearingTitle = Instance.new("TextLabel")
-wearingTitle.Size = UDim2.new(1, 0, 0, 30)
-wearingTitle.BackgroundTransparency = 1
-wearingTitle.Text = "当前穿戴"
-wearingTitle.Font = Enum.Font.GothamBold
-wearingTitle.TextSize = 16
-wearingTitle.TextColor3 = Color3.new(1, 1, 1)
-wearingTitle.Parent = wearingFrame
-
-local wearingScroll = Instance.new("ScrollingFrame")
-wearingScroll.Size = UDim2.new(1, -10, 1, -35)
-wearingScroll.Position = UDim2.new(0, 5, 0, 30)
-wearingScroll.BackgroundTransparency = 1
-wearingScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-wearingScroll.ScrollBarThickness = 5
-wearingScroll.Parent = wearingFrame
-
-local wearingLayout = Instance.new("UIListLayout")
-wearingLayout.Padding = UDim.new(0, 5)
-wearingLayout.Parent = wearingScroll
-
-local bundleFrame = Instance.new("Frame")
-bundleFrame.Size = UDim2.new(0, 250, 0, 300)
-bundleFrame.Position = UDim2.new(.5, -125, .5, -150)
-bundleFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-bundleFrame.Visible = false
-bundleFrame.Parent = gui
-Instance.new("UICorner", bundleFrame)
-
-local bundleClose = Instance.new("TextButton")
-bundleClose.Size = UDim2.new(0, 28, 0, 28)
-bundleClose.Position = UDim2.new(1, -33, 0, 3)
-bundleClose.BackgroundColor3 = Color3.fromRGB(180, 60, 60)
-bundleClose.Text = "✕"
-bundleClose.TextColor3 = Color3.new(1, 1, 1)
-bundleClose.Font = Enum.Font.GothamBold
-bundleClose.TextSize = 16
-bundleClose.Parent = bundleFrame
-
-Instance.new("UICorner", bundleClose).CornerRadius = UDim.new(0, 6)
-
-bundleClose.MouseButton1Click:Connect(function()
-	bundleFrame.Visible = false
-end)
-
-local bundleTitle = Instance.new("TextLabel")
-bundleTitle.Size = UDim2.new(1, 0, 0, 30)
-bundleTitle.BackgroundTransparency = 1
-bundleTitle.TextColor3 = Color3.new(1, 1, 1)
-bundleTitle.Font = Enum.Font.GothamBold
-bundleTitle.TextSize = 16
-bundleTitle.Parent = bundleFrame
-
-local bundleScroll = Instance.new("ScrollingFrame")
-bundleScroll.Size = UDim2.new(1, -10, 1, -40)
-bundleScroll.Position = UDim2.new(0, 5, 0, 35)
-bundleScroll.BackgroundTransparency = 1
-bundleScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-bundleScroll.ScrollBarThickness = 5
-bundleScroll.Parent = bundleFrame
-
-local bundleLayout = Instance.new("UIListLayout")
-bundleLayout.Padding = UDim.new(0, 5)
-bundleLayout.Parent = bundleScroll
-
-local categoryScroll = Instance.new("ScrollingFrame")
-categoryScroll.Size = UDim2.new(0.98, 0, 0, 36)
-categoryScroll.Position = UDim2.new(0.01, 0, 0, 86)
-categoryScroll.BackgroundTransparency = 1
-categoryScroll.ScrollBarThickness = 0
-categoryScroll.ScrollingDirection = Enum.ScrollingDirection.X
-categoryScroll.AutomaticCanvasSize = Enum.AutomaticSize.X
-categoryScroll.CanvasSize = UDim2.new()
-categoryScroll.Parent = frame
-
-local categoryLayout = Instance.new("UIListLayout")
-categoryLayout.FillDirection = Enum.FillDirection.Horizontal
-categoryLayout.Padding = UDim.new(0, 6)
-categoryLayout.Parent = categoryScroll
-
-local layout = Instance.new("UIGridLayout")
-layout.CellSize = UDim2.new(0, 80, 0, 100)
-layout.CellPadding = UDim2.new(0, 5, 0, 5)
-layout.Parent = scroll
-
-local bodyFrame = Instance.new("Frame")
-bodyFrame.Size = UDim2.new(0.72, 0, 1, -132)
-bodyFrame.Position = UDim2.new(0.27, 0, 0, 128)
-bodyFrame.BackgroundTransparency = 1
-bodyFrame.Visible = false
-bodyFrame.Parent = frame
-
-local bodyScroll = Instance.new("ScrollingFrame")
-bodyScroll.Size = UDim2.new(1, 0, 1, -40)
-bodyScroll.BackgroundTransparency = 1
-bodyScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-bodyScroll.ScrollBarThickness = 6
-bodyScroll.Parent = bodyFrame
-
-local bodyGrid = Instance.new("UIGridLayout")
-bodyGrid.CellSize = UDim2.new(0, 50, 0, 50)
-bodyGrid.CellPadding = UDim2.new(0, 5, 0, 5)
-bodyGrid.Parent = bodyScroll
-
-local rgbBox = Instance.new("TextBox")
-rgbBox.Size = UDim2.new(1, 0, 0, 30)
-rgbBox.Position = UDim2.new(0, 0, 1, -30)
-rgbBox.PlaceholderText = "255,255,255"
-rgbBox.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-rgbBox.TextColor3 = Color3.new(1, 1, 1)
-rgbBox.Font = Enum.Font.Gotham
-rgbBox.TextSize = 16
-rgbBox.Parent = bodyFrame
-
-Instance.new("UICorner", rgbBox)
-
-local catalogPages
-local loadMore
-local AutoSaveOutfit
-local updateWearing
-local currentQuery = ""
-local currentAssetType = Enum.AvatarAssetType.Shirt
-local loading = false
-
--- 原脚本这里读取本地 RBundles.rbxmx，没有文件会卡死，改成空文件夹
-local BundlesContainer = Instance.new("Folder")
-BundlesContainer.Name = "BundlesContainer"
-
-local BodyColors = {
-	Color3.fromRGB(255,205,148),
-	Color3.fromRGB(255,220,177),
-	Color3.fromRGB(255,235,205),
-	Color3.fromRGB(242,215,180),
-	Color3.fromRGB(224,172,105),
-	Color3.fromRGB(198,134,66),
-	Color3.fromRGB(161,110,74),
-	Color3.fromRGB(120,82,45),
-	Color3.fromRGB(90,60,40),
-	Color3.fromRGB(60,40,30),
-	Color3.fromRGB(255,255,255),
-	Color3.fromRGB(220,220,220),
-	Color3.fromRGB(170,170,170),
-	Color3.fromRGB(100,100,100),
-	Color3.fromRGB(0,0,0),
-	Color3.fromRGB(255,0,0),
-	Color3.fromRGB(255,128,128),
-	Color3.fromRGB(255,128,0),
-	Color3.fromRGB(255,255,0),
-	Color3.fromRGB(128,255,0),
-	Color3.fromRGB(0,255,0),
-	Color3.fromRGB(0,255,128),
-	Color3.fromRGB(0,255,255),
-	Color3.fromRGB(0,170,255),
-	Color3.fromRGB(0,0,255),
-	Color3.fromRGB(128,0,255),
-	Color3.fromRGB(255,0,255),
-	Color3.fromRGB(255,0,128),
-	Color3.fromRGB(139,69,19),
-	Color3.fromRGB(210,180,140),
-	Color3.fromRGB(128,64,0),
-	Color3.fromRGB(64,32,0),
-	Color3.fromRGB(242,243,243),
-	Color3.fromRGB(161,165,162),
-	Color3.fromRGB(249,233,153),
-	Color3.fromRGB(215,197,154),
-	Color3.fromRGB(194,218,184),
-	Color3.fromRGB(232,186,200),
-	Color3.fromRGB(128,187,219),
-	Color3.fromRGB(203,132,66),
-	Color3.fromRGB(204,142,105),
-	Color3.fromRGB(196,40,28),
-	Color3.fromRGB(196,112,160),
-	Color3.fromRGB(13,105,172),
-	Color3.fromRGB(245,205,48),
-	Color3.fromRGB(98,71,50),
-	Color3.fromRGB(27,42,53),
-	Color3.fromRGB(109,110,108),
-	Color3.fromRGB(40,127,71),
-	Color3.fromRGB(161,196,140),
-	Color3.fromRGB(243,207,155),
-	Color3.fromRGB(75,151,75),
-	Color3.fromRGB(160,95,53),
-	Color3.fromRGB(193,202,222),
-	Color3.fromRGB(236,236,236),
-	Color3.fromRGB(205,84,75),
-	Color3.fromRGB(193,223,240),
-	Color3.fromRGB(123,182,232),
-	Color3.fromRGB(247,241,141),
-	Color3.fromRGB(180,210,228),
-	Color3.fromRGB(217,133,108),
-	Color3.fromRGB(132,182,141),
-	Color3.fromRGB(248,241,132),
-	Color3.fromRGB(236,232,222),
-	Color3.fromRGB(238,196,182),
-	Color3.fromRGB(218,134,122),
-	Color3.fromRGB(110,153,202),
-	Color3.fromRGB(199,193,183),
-	Color3.fromRGB(107,50,124),
-	Color3.fromRGB(226,155,64),
-	Color3.fromRGB(218,133,65),
-	Color3.fromRGB(0,143,156),
-	Color3.fromRGB(104,92,67),
-	Color3.fromRGB(67,84,147),
-	Color3.fromRGB(191,183,177),
-	Color3.fromRGB(104,116,172),
-	Color3.fromRGB(229,173,200),
-	Color3.fromRGB(199,210,60),
-	Color3.fromRGB(85,165,175),
-	Color3.fromRGB(183,215,213),
-	Color3.fromRGB(164,189,71),
-	Color3.fromRGB(217,228,167),
-	Color3.fromRGB(231,172,88),
-	Color3.fromRGB(211,111,76),
-	Color3.fromRGB(146,57,120),
-	Color3.fromRGB(234,184,146),
-	Color3.fromRGB(165,165,203),
-	Color3.fromRGB(220,188,129),
-	Color3.fromRGB(174,122,89),
-	Color3.fromRGB(156,163,168),
-	Color3.fromRGB(213,115,61),
-	Color3.fromRGB(216,221,86),
-	Color3.fromRGB(116,134,157),
-	Color3.fromRGB(135,124,144),
-	Color3.fromRGB(224,152,100),
-	Color3.fromRGB(149,138,115),
-	Color3.fromRGB(32,58,86),
-}
-
-local originalHeadMesh
-
-task.spawn(function()
-	local character = player.Character or player.CharacterAdded:Wait()
-	local head = character:WaitForChild("Head")
-
-	local mesh = head:FindFirstChildOfClass("SpecialMesh")
-	if mesh then
-		originalHeadMesh = mesh:Clone()
-	end
-end)
-
-local function tryOn(item)
-
-	local character = player.Character or player.CharacterAdded:Wait()
-
-	local function AlreadyEquipped()
-		for _, v in ipairs(character:GetChildren()) do
-			if v:GetAttribute("CatalogId") == item.Id then
-				return true
-			end
-		end
-
-		local head = character:FindFirstChild("Head")
-		if head then
-			local mesh = head:FindFirstChildOfClass("SpecialMesh")
-			if mesh and mesh:GetAttribute("DisplayName") == item.Name then
-				return true
-			end
-		end
-		return false
-	end
-
-	if AlreadyEquipped() then
-		return
-	end
-
-	if item.AssetType == "Shirt" then
-		for _, v in ipairs(character:GetChildren()) do
-			if v:IsA("Shirt") then
-				v:Destroy()
-			end
-		end
-
-		local shirt = game:GetObjects("rbxassetid://" .. item.Id)[1]
-		shirt:SetAttribute("DisplayName", item.Name)
-		shirt.Parent = character
-		shirt:SetAttribute("CatalogId", item.Id)
-		updateWearing()
-		AutoSaveOutfit()
-
-	elseif item.AssetType == "Pants" then
-		for _, v in ipairs(character:GetChildren()) do
-			if v:IsA("Pants") then
-				v:Destroy()
-			end
-		end
-
-		local pants = game:GetObjects("rbxassetid://" .. item.Id)[1]
-		pants:SetAttribute("DisplayName", item.Name)
-		pants.Parent = character
-		pants:SetAttribute("CatalogId", item.Id)
-		updateWearing()
-		AutoSaveOutfit()
-
-	elseif item.AssetType == "TShirt" then
-		for _, v in ipairs(character:GetChildren()) do
-			if v:IsA("ShirtGraphic") then
-				v:Destroy()
-			end
-		end
-
-		local shirtGraphic = game:GetObjects("rbxassetid://" .. item.Id)[1]
-		shirtGraphic:SetAttribute("DisplayName", item.Name)
-		shirtGraphic.Parent = character
-		shirtGraphic:SetAttribute("CatalogId", item.Id)
-		updateWearing()
-		AutoSaveOutfit()
-
-	elseif item.AssetType == "Hat" or string.find(item.AssetType, "Accessory") then
-
-		local success, accessory = pcall(function()
-			return game:GetObjects("rbxassetid://" .. item.Id)[1]
-		end)
-
-		if success and accessory then
-			accessory.Parent = character
-			accessory:SetAttribute("CatalogId", item.Id)
-			accessory:SetAttribute("DisplayName", item.Name)
-			updateWearing()
-			AutoSaveOutfit()
-
-			local handle = accessory:FindFirstChild("Handle")
-			if handle then
-				local accessoryAttachment = handle:FindFirstChildWhichIsA("Attachment")
-				if accessoryAttachment then
-					local characterAttachment = character:FindFirstChild(accessoryAttachment.Name, true)
-					if characterAttachment then
-						handle.CFrame = characterAttachment.WorldCFrame * accessoryAttachment.CFrame:Inverse()
-						local weld = Instance.new("WeldConstraint")
-						weld.Part0 = handle
-						weld.Part1 = characterAttachment.Parent
-						weld.Parent = handle
+function globals:GetTargetModels(teamCheck)
+	local targets = {}
+	local ef = getEnemyFolder()
+	if not ef then return targets end
+	for _, v in ipairs(ef:GetChildren()) do
+		if v:IsA("Model") and v:FindFirstChildOfClass("Humanoid") then
+			local hum = v:FindFirstChildOfClass("Humanoid")
+			if hum and hum.Health > 0 then
+				if teamCheck then
+					local plr = Players:GetPlayerFromCharacter(v)
+					if plr and not isEnemy(plr) then
+					else
+						table.insert(targets, v)
 					end
 				else
-					local head = character:FindFirstChild("Head")
-					if head then
-						handle.CFrame = head.CFrame
-						local weld = Instance.new("Weld")
-						weld.Part0 = handle
-						weld.Part1 = head
-						weld.Parent = handle
-					end
-				end
-				handle.Anchored = false
-				handle.CanCollide = false
-			end
-
-			updateWearing()
-			AutoSaveOutfit()
-		end
-
-	elseif item.AssetType == Enum.AvatarAssetType.Face then
-		local head = character:FindFirstChild("Head")
-		if head then
-			local old = head:FindFirstChild("face")
-			if old then
-				old:Destroy()
-			end
-
-			local decal = Instance.new("Decal")
-			decal.Name = "face"
-			decal.Texture = "rbxassetid://" .. item.Id
-			decal.Parent = head
-		end
-	end
-end
-
-local function equipBundleMesh(mesh)
-
-	local character = player.Character or player.CharacterAdded:Wait()
-
-	if mesh:IsA("CharacterMesh") then
-		for _, v in ipairs(character:GetChildren()) do
-			if v:IsA("CharacterMesh") and v.BodyPart == mesh.BodyPart then
-				v:Destroy()
-			end
-		end
-
-		local clone = mesh:Clone()
-		clone:SetAttribute("DisplayName", mesh.Name)
-		clone:SetAttribute("BundleName", mesh.Parent.Name)
-		clone.Parent = character
-
-		updateWearing()
-		AutoSaveOutfit()
-
-	elseif mesh:IsA("SpecialMesh") then
-		local head = character:FindFirstChild("Head")
-		if head then
-			local old = head:FindFirstChildOfClass("SpecialMesh")
-			if old then
-				old:Destroy()
-			end
-
-			local clone = mesh:Clone()
-			clone:SetAttribute("DisplayName", mesh.Name)
-			clone:SetAttribute("BundleName", mesh.Parent.Name)
-			clone.Parent = head
-
-			updateWearing()
-			AutoSaveOutfit()
-		end
-	end
-
-	updateWearing()
-	AutoSaveOutfit()
-end
-
-updateWearing = function()
-	local character = player.Character
-	if not character then
-		return
-	end
-
-	for _, v in ipairs(wearingScroll:GetChildren()) do
-		if v:IsA("Frame") then
-			v:Destroy()
-		end
-	end
-
-	local function addRow(instance, name)
-		local row = Instance.new("Frame")
-		row.Size = UDim2.new(1, -5, 0, 32)
-		row.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-		row.Parent = wearingScroll
-
-		Instance.new("UICorner", row)
-
-		local label = Instance.new("TextLabel")
-		label.Size = UDim2.new(.65, 0, 1, 0)
-		label.BackgroundTransparency = 1
-		label.Text = name
-		label.TextScaled = true
-		label.TextColor3 = Color3.new(1, 1, 1)
-		label.Parent = row
-
-		local remove = Instance.new("TextButton")
-		remove.Size = UDim2.new(.35, -5, .8, 0)
-		remove.Position = UDim2.new(.65, 2, .1, 0)
-		remove.Text = "脱下"
-		remove.Font = Enum.Font.GothamBold
-		remove.TextScaled = true
-		remove.BackgroundColor3 = Color3.fromRGB(170, 60, 60)
-		remove.TextColor3 = Color3.new(1, 1, 1)
-		remove.Parent = row
-
-		Instance.new("UICorner", remove)
-
-		remove.MouseButton1Click:Connect(function()
-			if instance:IsA("Accessory") then
-				instance:Destroy()
-			elseif instance:IsA("Shirt") then
-				instance:Destroy()
-			elseif instance:IsA("Pants") then
-				instance:Destroy()
-			elseif instance:IsA("ShirtGraphic") then
-				instance:Destroy()
-			elseif instance:IsA("CharacterMesh") then
-				instance:Destroy()
-			elseif instance:IsA("SpecialMesh") and instance ~= originalHeadMesh then
-				local head = character:FindFirstChild("Head")
-				if head then
-					instance:Destroy()
-					if originalHeadMesh then
-						originalHeadMesh:Clone().Parent = head
-					end
+					table.insert(targets, v)
 				end
 			end
-
-			updateWearing()
-			AutoSaveOutfit()
-		end)
-	end
-
-	for _, v in ipairs(character:GetChildren()) do
-		if v:IsA("Accessory") then
-			addRow(v, v:GetAttribute("DisplayName") or v.Name)
-		elseif v:IsA("Shirt") then
-			addRow(v, v:GetAttribute("DisplayName") or v.Name)
-		elseif v:IsA("Pants") then
-			addRow(v, v:GetAttribute("DisplayName") or v.Name)
-		elseif v:IsA("ShirtGraphic") then
-			addRow(v, v:GetAttribute("DisplayName") or v.Name)
-		elseif v:IsA("CharacterMesh") then
-			addRow(v, v:GetAttribute("DisplayName") or v.Name)
 		end
 	end
-
-	local head = character:FindFirstChild("Head")
-	if head then
-		local mesh = head:FindFirstChildOfClass("SpecialMesh")
-		if mesh and (not originalHeadMesh or mesh.MeshId ~= originalHeadMesh.MeshId) then
-			addRow(mesh, mesh:GetAttribute("DisplayName") or "头部")
-		end
-	end
+	return targets
 end
 
-local function GetCurrentOutfit()
-	local character = player.Character
-	if not character then
-		return nil
+-- ============================================================
+-- 热键（手机版：删掉鼠标，只保留键盘 + 触摸）
+-- ============================================================
+local hotkeyValues = {"LeftAlt","LeftShift","RightShift","LeftControl","RightControl","Q","E","R","F","X","C","V"}
+local hotkeyMap = {
+	["LeftAlt"] = Enum.KeyCode.LeftAlt,
+	["LeftShift"] = Enum.KeyCode.LeftShift,
+	["RightShift"] = Enum.KeyCode.RightShift,
+	["LeftControl"] = Enum.KeyCode.LeftControl,
+	["RightControl"] = Enum.KeyCode.RightControl,
+	["Q"] = Enum.KeyCode.Q,
+	["E"] = Enum.KeyCode.E,
+	["R"] = Enum.KeyCode.R,
+	["F"] = Enum.KeyCode.F,
+	["X"] = Enum.KeyCode.X,
+	["C"] = Enum.KeyCode.C,
+	["V"] = Enum.KeyCode.V,
+}
+local getHotkeyName = function(k)
+	for n, v in pairs(hotkeyMap) do
+		if v == k then return n end
 	end
+	return "F"
+end
 
-	local data = {
-		Accessories = {},
-		Clothes = {},
-		Meshes = {},
-		BodyColors = {}
+-- ============================================================
+-- Ragebot 模块（手机版：默认全部自动）
+-- ============================================================
+local Rage = {}
+Rage.__index = Rage
+
+local function safeRequire(module)
+	if not module then return nil end
+	local ok, result = pcall(require, module)
+	if ok then return result end
+	return nil
+end
+
+local function getCenter(camera)
+	if not camera then return nil end
+	return Vector2.new(camera.ViewportSize.X * 0.5, camera.ViewportSize.Y * 0.5)
+end
+
+function Rage.new(context)
+	local self = setmetatable({}, Rage)
+	self.services = context.services
+	self.globals = context.globals
+	self.cleaner = context.Cleaner.new()
+	self.errorHandler = context.errorHandler
+	self.player = self.globals:GetPlayer()
+	self.repStore = self.services.ReplicatedStorage
+	self.workspace = self.services.Workspace
+	self.running = true
+	self._lastRcsTick = 0
+	self._rcsAccumulator = 0
+	self._lastRapidClick = 0
+	self._silentAimHooks = {}
+	self._silentAimAttempted = false
+	self._silentAimBound = false
+	self._weaponDefaults = {}
+	self._weaponTables = {}
+
+	self.settings = {
+		silentAim = false,
+		silentAimMode = "自动",
+		wallbang = false,
+		dynamicMiss = false,
+		baseHitChance = 100,
+		aimlock = false,
+		aimlockMode = "自动",
+		aimlockMethod = "Camera Lerp",
+		aimlockFov = 150,
+		aimSmoothness = 2,
+		aimJitter = 10,
+		flickBot = false,
+		targetPart = "Head",
+		randomPart = false,
+		fullFov360 = false,
+		aimWallCheck = true,
+		teamCheck = true,
+		showFovCircle = false,
+		fovSize = 150,
+		rapidFire = false,
+		rapidFireDelay = 50,
+		rapidFireAutoClick = true,
+		instantReload = false,
+		instaEquip = false,
+		autoClicker = false,
+		autoClickDelay = 50,
+		rcs = false,
+		rcsStrength = 50,
+		rcsDelay = 0,
 	}
 
-	for _, v in ipairs(character:GetChildren()) do
-		if v:IsA("Accessory") then
-			table.insert(data.Accessories, {
-				Id = tonumber(v:GetAttribute("CatalogId")),
-				Name = v:GetAttribute("DisplayName")
-			})
-		elseif v:IsA("Shirt") then
-			data.Clothes.Shirt = tonumber(v:GetAttribute("CatalogId"))
-		elseif v:IsA("Pants") then
-			data.Clothes.Pants = tonumber(v:GetAttribute("CatalogId"))
-		elseif v:IsA("ShirtGraphic") then
-			data.Clothes.TShirt = tonumber(v:GetAttribute("CatalogId"))
-		elseif v:IsA("CharacterMesh") then
-			table.insert(data.Meshes, {
-				Bundle = v:GetAttribute("BundleName"),
-				Name = v.Name,
-				BodyPart = v.BodyPart.Name
-			})
+	self.silentAimCircle = nil
+	self.aimlockCircle = nil
+
+	if Drawing and Drawing.new then
+		local ok1, circle1 = pcall(Drawing.new, "Circle")
+		if ok1 and circle1 then
+			circle1.Visible = false
+			circle1.Color = Color3.fromRGB(255, 140, 190)
+			circle1.Thickness = 1
+			circle1.Transparency = 0.6
+			circle1.NumSides = 64
+			circle1.Filled = false
+			self.silentAimCircle = circle1
+			self.cleaner:Give(function() pcall(function() circle1.Visible = false; circle1:Remove() end) end)
+		end
+		local ok2, circle2 = pcall(Drawing.new, "Circle")
+		if ok2 and circle2 then
+			circle2.Visible = false
+			circle2.Color = Color3.fromRGB(120, 200, 255)
+			circle2.Thickness = 1
+			circle2.Transparency = 0.55
+			circle2.NumSides = 64
+			circle2.Filled = false
+			self.aimlockCircle = circle2
+			self.cleaner:Give(function() pcall(function() circle2.Visible = false; circle2:Remove() end) end)
 		end
 	end
 
-	for _, part in ipairs(character:GetChildren()) do
-		if part:IsA("BasePart") then
-			data.BodyColors[part.Name] = {
-				part.Color.R,
-				part.Color.G,
-				part.Color.B
-			}
-		end
-	end
-
-	local head = character:FindFirstChild("Head")
-	if head then
-		local mesh = head:FindFirstChildOfClass("SpecialMesh")
-		if mesh and mesh ~= originalHeadMesh then
-			data.HeadMesh = {
-				MeshId = mesh.MeshId,
-				TextureId = mesh.TextureId,
-				Scale = { mesh.Scale.X, mesh.Scale.Y, mesh.Scale.Z },
-				Offset = { mesh.Offset.X, mesh.Offset.Y, mesh.Offset.Z },
-				VertexColor = {
-					mesh.VertexColor.X,
-					mesh.VertexColor.Y,
-					mesh.VertexColor.Z
-				}
-			}
-		end
-	end
-
-	return data
+	self:_bind()
+	return self
 end
 
-AutoSaveOutfit = function()
-	if Settings.AutoLoad then
-		AutoSavedOutfit = GetCurrentOutfit()
-	end
+function Rage:_isActive()
+	return self.running and self.globals:IsAlive() ~= nil
 end
 
-local function LoadSavedOutfit(data)
-	local character = player.Character or player.CharacterAdded:Wait()
+function Rage:_getCamera() return self.globals:GetCamera() end
+function Rage:_getAimCenter() return getCenter(self:_getCamera()) end
 
-	for _, v in ipairs(character:GetChildren()) do
-		if v:IsA("Accessory")
-		or v:IsA("Shirt")
-		or v:IsA("Pants")
-		or v:IsA("ShirtGraphic")
-		or v:IsA("CharacterMesh") then
-			v:Destroy()
-		end
+function Rage:_getTargetPart(model)
+	if not model then return nil end
+	local choice = self.settings.targetPart
+	if self.settings.randomPart or choice == "Random Part" then
+		local pool = { "Head", "UpperTorso", "LowerTorso" }
+		choice = pool[math.random(1, #pool)]
 	end
+	return model:FindFirstChild(choice) or model:FindFirstChild("Head")
+end
 
-	local head = character:FindFirstChild("Head")
-	if head then
-		local mesh = head:FindFirstChildOfClass("SpecialMesh")
-		if mesh then
-			mesh:Destroy()
-		end
-
-		if originalHeadMesh then
-			originalHeadMesh:Clone().Parent = head
-		end
-	end
-
-	if data.Clothes.Shirt then
-		tryOn({ Id = data.Clothes.Shirt, Name = "上衣", AssetType = "Shirt" })
-	end
-
-	if data.Clothes.Pants then
-		tryOn({ Id = data.Clothes.Pants, Name = "裤子", AssetType = "Pants" })
-	end
-
-	if data.Clothes.TShirt then
-		tryOn({ Id = data.Clothes.TShirt, Name = "T恤", AssetType = "TShirt" })
-	end
-
-	for _, acc in ipairs(data.Accessories) do
-		if acc.Id then
-			tryOn({ Id = acc.Id, Name = acc.Name, AssetType = "Hat" })
-		end
-	end
-
-	if data.BodyColors then
-		for partName, color in pairs(data.BodyColors) do
-			local part = character:FindFirstChild(partName)
-			if part then
-				part.Color = Color3.new(color[1], color[2], color[3])
+function Rage:_isTargetVisible(part, model)
+	if self.settings.wallbang or not self.settings.aimWallCheck then return true end
+	local camera = self:_getCamera()
+	if not camera or not part then return false end
+	local origin = camera.CFrame.Position
+	local direction = part.Position - origin
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	local ignore = { camera }
+	local character = self.player and self.player.Character
+	if character then ignore[#ignore + 1] = character end
+	local charactersFolder = self.workspace:FindFirstChild("Characters")
+	if charactersFolder then
+		for _, teamFolder in ipairs(charactersFolder:GetChildren()) do
+			for _, child in ipairs(teamFolder:GetChildren()) do
+				if child ~= model and child ~= character then
+					ignore[#ignore + 1] = child
+				end
 			end
 		end
 	end
+	local debris = self.workspace:FindFirstChild("Debris")
+	if debris then ignore[#ignore + 1] = debris end
+	local visualizers = self.workspace:FindFirstChild("RaycastVisualizers")
+	if visualizers then ignore[#ignore + 1] = visualizers end
 
-	if data.Meshes then
-		for _, meshInfo in ipairs(data.Meshes) do
-			local folder = BundlesContainer:FindFirstChild(meshInfo.Bundle)
-			if folder then
-				for _, mesh in ipairs(folder:GetChildren()) do
-					if mesh:IsA("CharacterMesh")
-					and mesh.Name == meshInfo.Name
-					and mesh.BodyPart.Name == meshInfo.BodyPart then
-						equipBundleMesh(mesh)
-						break
+	local attempts = 0
+	while attempts < 15 do
+		attempts = attempts + 1
+		params.FilterDescendantsInstances = ignore
+		local result = self.workspace:Raycast(origin, direction, params)
+		if not result then return true end
+		if result.Instance and result.Instance:IsDescendantOf(model) then return true end
+		if result.Instance and (result.Instance.Transparency >= 0.5
+			or not result.Instance.CanCollide
+			or tostring(result.Instance.Name):lower():find("hitbox", 1, true)
+			or result.Instance.Name == "Glass") then
+			ignore[#ignore + 1] = result.Instance
+		else
+			return false
+		end
+	end
+	return false
+end
+
+function Rage:_getTargetData(maxFov)
+	local camera = self:_getCamera()
+	local center = self:_getAimCenter()
+	if not camera or not center then return nil end
+
+	local best, bestScore = nil, tonumber(maxFov) or self.settings.aimlockFov or 150
+	local characters = self.settings.teamCheck and self.globals:GetTargetModels(true) or self.globals:GetTargetModels(false)
+
+	for _, model in ipairs(characters or {}) do
+		local humanoid = model:FindFirstChildOfClass("Humanoid")
+		if humanoid and humanoid.Health > 0 then
+			local part = self:_getTargetPart(model)
+			if part then
+				local worldPos, onScreen = camera:WorldToViewportPoint(part.Position)
+				if self.settings.fullFov360 or onScreen then
+					local score = self.settings.fullFov360
+						and (part.Position - camera.CFrame.Position).Magnitude
+						or (Vector2.new(worldPos.X, worldPos.Y) - center).Magnitude
+					if score <= bestScore and self:_isTargetVisible(part, model) then
+						best = { model = model, part = part, pos = part.Position, score = score }
+						bestScore = score
 					end
 				end
 			end
 		end
 	end
+	return best
+end
 
-	if data.HeadMesh then
-		local head = character:FindFirstChild("Head")
-		if head then
-			local old = head:FindFirstChildOfClass("SpecialMesh")
-			if old then
-				old:Destroy()
+function Rage:_applyAim(target, strengthScale)
+	local camera = self:_getCamera()
+	local center = self:_getAimCenter()
+	if not camera or not center or not target then return end
+
+	local worldPos = target.pos or target.part.Position
+	local viewportPos = camera:WorldToViewportPoint(worldPos)
+	local jitter = tonumber(self.settings.aimJitter) or 10
+	local dx = (viewportPos.X - center.X) + ((math.random() - 0.5) * (jitter / 100) * 2)
+	local dy = (viewportPos.Y - center.Y) + ((math.random() - 0.5) * (jitter / 100) * 2)
+	local smooth = math.max(1, tonumber(self.settings.aimSmoothness) or 2)
+	dx = (dx / smooth) * (strengthScale or 1)
+	dy = (dy / smooth) * (strengthScale or 1)
+
+	-- 手机版：强制用 Camera Lerp（mousemoverel 手机上不能用）
+	local look = CFrame.lookAt(camera.CFrame.Position, worldPos)
+	camera.CFrame = camera.CFrame:Lerp(look, 0.6)
+end
+
+function Rage:_updateFovCircles()
+	local camera = self:_getCamera()
+	local center = self:_getAimCenter()
+	if not camera or not center then
+		if self.silentAimCircle then self.silentAimCircle.Visible = false end
+		if self.aimlockCircle then self.aimlockCircle.Visible = false end
+		return
+	end
+	if self.silentAimCircle then
+		self.silentAimCircle.Visible = self.settings.silentAim and self.settings.showFovCircle
+		if self.silentAimCircle.Visible then
+			self.silentAimCircle.Position = center
+			self.silentAimCircle.Radius = tonumber(self.settings.fovSize) or 150
+		end
+	end
+	if self.aimlockCircle then
+		self.aimlockCircle.Visible = self.settings.aimlock
+		if self.aimlockCircle.Visible then
+			self.aimlockCircle.Position = center
+			self.aimlockCircle.Radius = tonumber(self.settings.aimlockFov) or 150
+		end
+	end
+end
+
+function Rage:_findAllWeaponData()
+	local found = {}
+	local getter = getgc or (debug and debug.getgc)
+	if getter then
+		local ok, objects = pcall(getter, true)
+		if ok and type(objects) == "table" then
+			for _, object in ipairs(objects) do
+				if type(object) == "table" and type(rawget(object, "FireRate")) == "number" then
+					found[object] = true
+				end
 			end
-
-			local mesh = Instance.new("SpecialMesh")
-			mesh.MeshId = data.HeadMesh.MeshId
-			mesh.TextureId = data.HeadMesh.TextureId
-			mesh.Scale = Vector3.new(unpack(data.HeadMesh.Scale))
-			mesh.Offset = Vector3.new(unpack(data.HeadMesh.Offset))
-			mesh.VertexColor = Vector3.new(unpack(data.HeadMesh.VertexColor))
-			mesh.Parent = head
 		end
 	end
 
-	updateWearing()
-	AutoSaveOutfit()
-end
-
-local function openBundle(folder)
-	bundleFrame.Visible = true
-	bundleTitle.Text = folder.Name
-
-	for _, v in ipairs(bundleScroll:GetChildren()) do
-		if v:IsA("TextButton") then
-			v:Destroy()
-		end
-	end
-
-	for _, mesh in ipairs(folder:GetChildren()) do
-		local button = Instance.new("TextButton")
-		button.Size = UDim2.new(1, -5, 0, 35)
-		button.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-		button.TextColor3 = Color3.new(1, 1, 1)
-		button.Font = Enum.Font.GothamBold
-		button.TextSize = 16
-		button.Text = mesh.Name
-		button.Parent = bundleScroll
-
-		Instance.new("UICorner", button)
-
-		button.MouseButton1Click:Connect(function()
-			equipBundleMesh(mesh)
-		end)
-	end
-end
-
-local function addItem(item)
-	local button = Instance.new("ImageButton")
-	button.Size = UDim2.new(0, 80, 0, 100)
-	button.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-	button.Parent = scroll
-	local imgCorner = Instance.new("UICorner", button)
-	imgCorner.CornerRadius = UDim.new(0, 8)
-
-	local image = Instance.new("ImageLabel")
-	image.Size = UDim2.new(1, -10, 0, 70)
-	image.Position = UDim2.new(0, 5, 0, 5)
-	image.BackgroundTransparency = 1
-	image.Image = "rbxthumb://type=Asset&id=" .. item.Id .. "&w=150&h=150"
-	image.Parent = button
-	local imageCorner = Instance.new("UICorner", image)
-	imageCorner.CornerRadius = UDim.new(0, 8)
-
-	local text = Instance.new("TextLabel")
-	text.Name = "name"
-	text.Size = UDim2.new(1, -4, 0, 20)
-	text.Position = UDim2.new(0, 2, 1, -22)
-	text.BackgroundTransparency = 1
-	text.TextScaled = true
-	text.TextColor3 = Color3.new(1, 1, 1)
-	text.Text = item.Name
-	text.Parent = button
-	local textCorner = Instance.new("UICorner", text)
-	textCorner.CornerRadius = UDim.new(0, 6)
-
-	button.MouseButton1Click:Connect(function()
-		local tryBtn = Instance.new("TextButton")
-		tryBtn.Size = UDim2.new(1, 0, 0, 25)
-		tryBtn.Position = UDim2.new(0, 0, 0, 75)
-		tryBtn.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
-		tryBtn.TextColor3 = Color3.new(1, 1, 1)
-		tryBtn.Font = Enum.Font.GothamBold
-		tryBtn.TextSize = 14
-		tryBtn.Text = "试穿"
-		tryBtn.Parent = button
-
-		Instance.new("UICorner", tryBtn).CornerRadius = UDim.new(0, 6)
-
-		task.delay(5, function()
-			if tryBtn then
-				tryBtn:Destroy()
+	local weaponRoots = {
+		self.repStore:FindFirstChild("Weapons"),
+		self.repStore:FindFirstChild("Assets") and self.repStore.Assets:FindFirstChild("Weapons"),
+		self.repStore:FindFirstChild("Database") and self.repStore.Database:FindFirstChild("Weapons"),
+	}
+	for _, root in ipairs(weaponRoots) do
+		if root then
+			for _, item in ipairs(root:GetChildren()) do
+				local mod
+				if item:IsA("ModuleScript") then mod = item
+				elseif item:IsA("Folder") then
+					mod = item:FindFirstChild("Settings") or item:FindFirstChild("Data") or item:FindFirstChild("Config")
+				end
+				if mod and mod:IsA("ModuleScript") then
+					local result = safeRequire(mod)
+					if type(result) == "table" and type(rawget(result, "FireRate")) == "number" then
+						found[result] = true
+					end
+				end
 			end
-		end)
-
-		tryBtn.MouseButton1Click:Connect(function()
-			tryOn(item)
-		end)
-	end)
-end
-
-local function addCategoryButton(text, assetType)
-	local button = Instance.new("TextButton")
-	button.Size = UDim2.new(0, 80, 1, 0)
-	button.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-	button.TextColor3 = Color3.new(1, 1, 1)
-	button.Font = Enum.Font.GothamBold
-	button.TextSize = 14
-	button.Text = text
-	button.Parent = categoryScroll
-
-	Instance.new("UICorner", button).CornerRadius = UDim.new(0, 6)
-
-	button.MouseButton1Click:Connect(function()
-		currentAssetType = assetType
-		loadMore(true)
-	end)
-end
-
-local function clearItems()
-	for _, v in ipairs(scroll:GetChildren()) do
-		if v:IsA("GuiObject") and not v:IsA("UIGridLayout") then
-			v:Destroy()
 		end
 	end
-	scroll.CanvasPosition = Vector2.zero
+	return found
 end
 
-local SelectedBodyPart = "全部"
+function Rage:_patchWeaponModules()
+	local allData = self:_findAllWeaponData()
+	for data in pairs(allData) do
+		if not self._weaponTables[data] then
+			self._weaponTables[data] = true
+			self._weaponDefaults[data] = {
+				ReloadTime = rawget(data, "ReloadTime"),
+				ReloadSpeed = rawget(data, "ReloadSpeed"),
+				FireRate = rawget(data, "FireRate"),
+				Auto = rawget(data, "Auto"),
+				EquipTime = rawget(data, "EquipTime"),
+				DrawTime = rawget(data, "DrawTime"),
+				DequipTime = rawget(data, "DequipTime"),
+			}
+		end
+	end
 
-local Parts = {
-	"全部",
-	"头部",
-	"躯干",
-	"左臂",
-	"右臂",
-	"左腿",
-	"右腿"
+	local function setField(tbl, key, value)
+		if type(tbl) ~= "table" or rawget(tbl, key) == nil then return end
+		if setreadonly then pcall(setreadonly, tbl, false) end
+		pcall(function() rawset(tbl, key, value) end)
+		if setreadonly then pcall(setreadonly, tbl, true) end
+	end
+
+	for data, defaults in pairs(self._weaponDefaults) do
+		if self.settings.instantReload then
+			setField(data, "ReloadTime", 0)
+			setField(data, "ReloadSpeed", 999)
+		else
+			setField(data, "ReloadTime", defaults.ReloadTime)
+			setField(data, "ReloadSpeed", defaults.ReloadSpeed)
+		end
+		if self.settings.rapidFire then
+			local delay = (tonumber(self.settings.rapidFireDelay) or 50) / 1000
+			setField(data, "FireRate", math.max(delay, 0.001))
+		else
+			setField(data, "FireRate", defaults.FireRate)
+		end
+		if self.settings.instaEquip then
+			setField(data, "EquipTime", 0)
+			setField(data, "DrawTime", 0)
+			setField(data, "DequipTime", 0)
+		else
+			setField(data, "EquipTime", defaults.EquipTime)
+			setField(data, "DrawTime", defaults.DrawTime)
+			setField(data, "DequipTime", defaults.DequipTime)
+		end
+		if self.settings.autoClicker then
+			setField(data, "Auto", true)
+			setField(data, "Automatic", true)
+		else
+			setField(data, "Auto", defaults.Auto)
+		end
+	end
+end
+
+function Rage:_processInstantActions()
+	local char = self.player and self.player.Character
+	if not char then return end
+	for _, tool in ipairs(char:GetChildren()) do
+		if tool:IsA("Tool") then
+			pcall(function()
+				if self.settings.instaEquip then
+					if rawget(tool, "Equipped") == false then
+						pcall(function() rawset(tool, "Equipped", true) end)
+					end
+					local equipTime = rawget(tool, "EquipTime") or rawget(tool, "DrawTime")
+					if equipTime and type(equipTime) == "number" then
+						pcall(function() rawset(tool, "EquipTime", 0); rawset(tool, "DrawTime", 0) end)
+					end
+				end
+				if self.settings.instantReload then
+					local rounds = rawget(tool, "Rounds")
+					local capacity = rawget(tool, "Capacity")
+					if rounds and capacity and type(rounds) == "number" and type(capacity) == "number" then
+						if rounds < capacity then
+							pcall(function() rawset(tool, "Rounds", capacity) end)
+						end
+					end
+					local reloading = rawget(tool, "Reloading")
+					if reloading == true then
+						pcall(function() rawset(tool, "Reloading", false) end)
+					end
+				end
+			end)
+		end
+	end
+end
+
+function Rage:_hookAnimator(animator)
+	if not animator or not animator:IsA("Animator") then return end
+	if animator:GetAttribute("RageWeaponAnimHooked") then return end
+	animator:SetAttribute("RageWeaponAnimHooked", true)
+
+	self.cleaner:Give(self.errorHandler:Connect(animator.AnimationPlayed, "Rage Weapon Animation", function(animationTrack)
+		local animation = animationTrack and animationTrack.Animation
+		if not animation then return end
+		local animationName = string.lower(animation.Name or "")
+		local animationId = string.lower(animation.AnimationId or "")
+		local function applySpeed()
+			if self.settings.instantReload and (animationName:find("reload") or animationId:find("reload")) then
+				pcall(function() animationTrack:AdjustSpeed(100) end)
+				task.delay(0.05, function()
+					if animationTrack.IsPlaying then pcall(function() animationTrack:Stop() end) end
+				end)
+				return
+			end
+			if self.settings.instaEquip and (animationName:find("equip") or animationName:find("draw")
+				or animationId:find("equip") or animationId:find("draw")) then
+				pcall(function() animationTrack:AdjustSpeed(100) end)
+				task.delay(0.05, function()
+					if animationTrack.IsPlaying then pcall(function() animationTrack:Stop() end) end
+				end)
+			end
+		end
+		self.cleaner:Give(self.errorHandler:Connect(animationTrack:GetPropertyChangedSignal("Speed"), "Rage Weapon Animation Speed", applySpeed))
+		applySpeed()
+	end))
+end
+
+function Rage:_bindCharacter(character)
+	if not character or character:GetAttribute("RageWeaponCharacterHooked") then return end
+	character:SetAttribute("RageWeaponCharacterHooked", true)
+	for _, descendant in ipairs(character:GetDescendants()) do
+		if descendant:IsA("Animator") then
+			self:_hookAnimator(descendant)
+		end
+	end
+end
+
+function Rage:_updateAimlock(dt)
+	if not self.settings.aimlock and not self.settings.flickBot then return end
+	-- 手机版：全部常驻开启（去掉热键判断）
+	local shouldAim = self.settings.aimlock
+	local shouldFlick = false
+
+	if not shouldAim and not shouldFlick then return end
+	local target = self:_getTargetData(self.settings.aimlockFov)
+	if not target then return end
+	if shouldFlick then self:_applyAim(target, 0.7); return end
+	if shouldAim then
+		if self.settings.aimWallCheck and not self.settings.wallbang
+			and not self:_isTargetVisible(target.part, target.model) then
+			return
+		end
+		self:_applyAim(target, 1)
+	end
+end
+
+function Rage:_updateRcs(dt)
+	if not self.settings.rcs then
+		self._rcsAccumulator = 0; self._lastRcsTick = 0; return
+	end
+	
+	self._rcsAccumulator = 0
+end
+
+function Rage:_updateAutoClick()
+	
+	self._lastRapidClick = 0
+end
+
+function Rage:_bind()
+	self.cleaner:Give(function() self.running = false end)
+	if self.player then
+		if self.player.Character then
+			task.spawn(function() self:_bindCharacter(self.player.Character) end)
+		end
+		self.cleaner:Give(self.errorHandler:Connect(self.player.CharacterAdded, "Rage CharacterAdded", function(character)
+			self:_bindCharacter(character)
+		end))
+	end
+	self.errorHandler:Spawn("Rage Weapon Mods", function()
+		while self.running do
+			local needMods = self.settings.rapidFire or self.settings.instantReload
+				or self.settings.instaEquip or self.settings.autoClicker
+			if needMods then self:_patchWeaponModules() end
+			task.wait(5 + math.random() * 10)
+		end
+	end)
+	self.cleaner:Give(self.errorHandler:Connect(self.services.RunService.RenderStepped, "Rage RenderStepped", function(dt)
+		if not self:_isActive() then
+			self:_updateFovCircles(); return
+		end
+		self:_updateFovCircles()
+		self:_updateAimlock(dt or 0.016)
+		self:_updateRcs(dt or 0.016)
+		self:_updateAutoClick()
+		self:_processInstantActions()
+	end))
+end
+
+
+function Rage:SetSilentAim(v) self.settings.silentAim = v == true end
+function Rage:SetWallbang(v) self.settings.wallbang = v == true end
+function Rage:SetDynamicMiss(v) self.settings.dynamicMiss = v == true end
+function Rage:SetBaseHitChance(v)
+	local n = tonumber(v)
+	if n then self.settings.baseHitChance = math.clamp(n, 1, 100) end
+end
+function Rage:SetAimlock(v) self.settings.aimlock = v == true end
+function Rage:SetAimlockMode(v) if v then self.settings.aimlockMode = v end end
+function Rage:SetAimlockMethod(v) if v then self.settings.aimlockMethod = v end end
+function Rage:SetAimlockFov(v)
+	local n = tonumber(v)
+	if n then self.settings.aimlockFov = math.clamp(n, 10, 1000) end
+end
+function Rage:SetAimSmoothness(v)
+	local n = tonumber(v)
+	if n then self.settings.aimSmoothness = math.clamp(n, 1, 10) end
+end
+function Rage:SetAimJitter(v)
+	local n = tonumber(v)
+	if n then self.settings.aimJitter = math.clamp(n, 0, 50) end
+end
+function Rage:SetFlickBot(v) self.settings.flickBot = v == true end
+function Rage:SetTargetPart(v) if v then self.settings.targetPart = v end end
+function Rage:SetRandomPart(v) self.settings.randomPart = v == true end
+function Rage:SetFullFov360(v) self.settings.fullFov360 = v == true end
+function Rage:SetAimWallCheck(v) self.settings.aimWallCheck = v == true end
+function Rage:SetTeamCheck(v) self.settings.teamCheck = v == true end
+function Rage:SetShowFovCircle(v) self.settings.showFovCircle = v == true end
+function Rage:SetFovSize(v)
+	local n = tonumber(v)
+	if n then self.settings.fovSize = math.clamp(n, 50, 1000) end
+end
+function Rage:SetRapidFire(v) self.settings.rapidFire = v == true end
+function Rage:SetRapidFireDelay(v)
+	local n = tonumber(v)
+	if n then self.settings.rapidFireDelay = math.clamp(n, 1, 500) end
+end
+function Rage:SetInstantReload(v) self.settings.instantReload = v == true end
+function Rage:SetInstaEquip(v) self.settings.instaEquip = v == true end
+function Rage:SetAutoClicker(v) self.settings.autoClicker = v == true end
+function Rage:SetRcs(v) self.settings.rcs = v == true end
+function Rage:SetRcsStrength(v)
+	local n = tonumber(v)
+	if n then self.settings.rcsStrength = math.clamp(n, 0, 100) end
+end
+function Rage:SetRcsDelay(v)
+	local n = tonumber(v)
+	if n then self.settings.rcsDelay = math.clamp(n, 0, 500) end
+end
+function Rage:Destroy() self.cleaner:Cleanup() end
+
+
+local rageBot = nil
+local context = {
+	services = {
+		ReplicatedStorage = RS,
+		RunService = RunService,
+		UserInputService = UserInputService,
+		Workspace = Workspace,
+	},
+	globals = globals,
+	Cleaner = Cleaner,
+	errorHandler = ErrorHandler.new(),
 }
 
-local partSelector = Instance.new("TextButton")
-partSelector.Size = UDim2.new(0, 120, 0, 30)
-partSelector.Position = UDim2.new(0.7, 0, 0, 50)
-partSelector.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-partSelector.Text = "全部"
-partSelector.TextColor3 = Color3.new(1, 1, 1)
-partSelector.Parent = frame
+task.spawn(function()
+	task.wait(15)
+	rageBot = Rage.new(context)
 
-Instance.new("UICorner", partSelector)
+	local RageGroup2 = Tabs.Ragebot:AddLeftGroupbox("静默自瞄（危险）", "target")
 
-partSelector.Visible = false
+	RageGroup2:AddToggle("SilentAimToggle", {
+		Text = "启用静默自瞄",
+		Default = false,
+	})
+	Toggles.SilentAimToggle:OnChanged(function(v)
+		if rageBot then rageBot:SetSilentAim(v) end
+	end)
 
-local index = 1
+	RageGroup2:AddToggle("WallbangToggleRage", {
+		Text = "穿墙",
+		Default = false,
+	})
+	Toggles.WallbangToggleRage:OnChanged(function(v)
+		if rageBot then rageBot:SetWallbang(v) end
+	end)
 
-partSelector.MouseButton1Click:Connect(function()
-	index += 1
-	if index > #Parts then
-		index = 1
-	end
+	RageGroup2:AddToggle("DynamicMissToggle", {
+		Text = "动态未命中",
+		Default = false,
+	})
+	Toggles.DynamicMissToggle:OnChanged(function(v)
+		if rageBot then rageBot:SetDynamicMiss(v) end
+	end)
 
-	SelectedBodyPart = Parts[index]
-	partSelector.Text = Parts[index]
+	RageGroup2:AddSlider("BaseHitChanceSlider", {
+		Text = "基础命中率",
+		Default = 100,
+		Min = 1,
+		Max = 100,
+		Rounding = 0,
+		Suffix = "%",
+	})
+	Options.BaseHitChanceSlider:OnChanged(function(v)
+		if rageBot then rageBot:SetBaseHitChance(v) end
+	end)
+
+	local RageGroup3 = Tabs.Ragebot:AddLeftGroupbox("自瞄锁（手机常驻）", "crosshair")
+
+	RageGroup3:AddToggle("AimlockToggle", {
+		Text = "启用自瞄锁",
+		Default = false,
+	})
+	Toggles.AimlockToggle:OnChanged(function(v)
+		if rageBot then rageBot:SetAimlock(v) end
+	end)
+
+	RageGroup3:AddSlider("AimlockFovSlider", {
+		Text = "FOV",
+		Default = 150,
+		Min = 10,
+		Max = 1000,
+		Rounding = 0,
+	})
+	Options.AimlockFovSlider:OnChanged(function(v)
+		if rageBot then rageBot:SetAimlockFov(v) end
+	end)
+
+	RageGroup3:AddSlider("AimSmoothnessSlider", {
+		Text = "平滑度",
+		Default = 2,
+		Min = 1,
+		Max = 10,
+		Rounding = 0,
+	})
+	Options.AimSmoothnessSlider:OnChanged(function(v)
+		if rageBot then rageBot:SetAimSmoothness(v) end
+	end)
+
+	RageGroup3:AddSlider("AimJitterSlider", {
+		Text = "抖动",
+		Default = 10,
+		Min = 0,
+		Max = 50,
+		Rounding = 0,
+		Suffix = "%",
+	})
+	Options.AimJitterSlider:OnChanged(function(v)
+		if rageBot then rageBot:SetAimJitter(v) end
+	end)
+
+	local RageGroup4 = Tabs.Ragebot:AddLeftGroupbox("瞄准设置", "target")
+
+	RageGroup4:AddDropdown("TargetPartDropdownRage", {
+		Values = {"Head", "UpperTorso", "LowerTorso", "Random Part"},
+		Default = "Head",
+		Text = "目标部位",
+	})
+	Options.TargetPartDropdownRage:OnChanged(function(v)
+		if rageBot then rageBot:SetTargetPart(v) end
+	end)
+
+	RageGroup4:AddToggle("RandomPartToggle", {
+		Text = "随机部位",
+		Default = false,
+	})
+	Toggles.RandomPartToggle:OnChanged(function(v)
+		if rageBot then rageBot:SetRandomPart(v) end
+	end)
+
+	RageGroup4:AddToggle("FullFov360Toggle", {
+		Text = "360度FOV",
+		Default = false,
+	})
+	Toggles.FullFov360Toggle:OnChanged(function(v)
+		if rageBot then rageBot:SetFullFov360(v) end
+	end)
+
+	RageGroup4:AddToggle("AimWallCheckToggleRage", {
+		Text = "墙壁检测",
+		Default = true,
+	})
+	Toggles.AimWallCheckToggleRage:OnChanged(function(v)
+		if rageBot then rageBot:SetAimWallCheck(v) end
+	end)
+
+	RageGroup4:AddToggle("TeamCheckToggleRage", {
+		Text = "团队检查",
+		Default = true,
+	})
+	Toggles.TeamCheckToggleRage:OnChanged(function(v)
+		if rageBot then rageBot:SetTeamCheck(v) end
+	end)
+
+	RageGroup4:AddToggle("ShowFovCircleToggleRage", {
+		Text = "显示FOV圈",
+		Default = false,
+	})
+	Toggles.ShowFovCircleToggleRage:OnChanged(function(v)
+		if rageBot then rageBot:SetShowFovCircle(v) end
+	end)
+
+	RageGroup4:AddSlider("FovSizeSliderRage", {
+		Text = "FOV大小",
+		Default = 150,
+		Min = 50,
+		Max = 1000,
+		Rounding = 0,
+	})
+	Options.FovSizeSliderRage:OnChanged(function(v)
+		if rageBot then rageBot:SetFovSize(v) end
+	end)
+
+	local RageGroup5 = Tabs.Ragebot:AddRightGroupbox("武器修改", "swords")
+
+	RageGroup5:AddToggle("RapidFireToggle", {
+		Text = "快速射击",
+		Default = false,
+	})
+	Toggles.RapidFireToggle:OnChanged(function(v)
+		if rageBot then rageBot:SetRapidFire(v) end
+	end)
+
+	RageGroup5:AddSlider("RapidFireDelaySlider", {
+		Text = "延迟(ms)",
+		Default = 50,
+		Min = 1,
+		Max = 500,
+		Rounding = 0,
+	})
+	Options.RapidFireDelaySlider:OnChanged(function(v)
+		if rageBot then rageBot:SetRapidFireDelay(v) end
+	end)
+
+	RageGroup5:AddToggle("InstantReloadToggle", {
+		Text = "瞬间换弹",
+		Default = false,
+	})
+	Toggles.InstantReloadToggle:OnChanged(function(v)
+		if rageBot then rageBot:SetInstantReload(v) end
+	end)
+
+	RageGroup5:AddToggle("InstaEquipToggle", {
+		Text = "瞬间装备",
+		Default = false,
+	})
+	Toggles.InstaEquipToggle:OnChanged(function(v)
+		if rageBot then rageBot:SetInstaEquip(v) end
+	end)
+
+	RageGroup5:AddToggle("AutoClickerToggle", {
+		Text = "自动连点",
+		Default = false,
+	})
+	Toggles.AutoClickerToggle:OnChanged(function(v)
+		if rageBot then rageBot:SetAutoClicker(v) end
+	end)
+
+	local RageGroup6 = Tabs.Ragebot:AddRightGroupbox("后坐力控制", "activity")
+
+	RageGroup6:AddToggle("RcsToggle", {
+		Text = "启用 RCS",
+		Default = false,
+	})
+	Toggles.RcsToggle:OnChanged(function(v)
+		if rageBot then rageBot:SetRcs(v) end
+	end)
+
+	RageGroup6:AddSlider("RcsStrengthSlider", {
+		Text = "强度",
+		Default = 50,
+		Min = 0,
+		Max = 100,
+		Rounding = 0,
+		Suffix = "%",
+	})
+	Options.RcsStrengthSlider:OnChanged(function(v)
+		if rageBot then rageBot:SetRcsStrength(v) end
+	end)
 end)
 
-loadMore = function(reset)
-	if loading then
-		return
+
+local VisualAimbot = {
+	Enabled = false,
+	ShowFOV = false,
+	Radius = 100,
+	Smooth = 3,
+	WallCheck = false,
+}
+
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Position = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+FOVCircle.Radius = VisualAimbot.Radius
+FOVCircle.Filled = false
+FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+FOVCircle.Visible = false
+FOVCircle.Thickness = 1
+
+local function getClosestEnemy()
+	local cl, sd = nil, VisualAimbot.Radius
+	local ef = getEnemyFolder()
+	if not ef or not VisualAimbot.Enabled then return nil end
+	local mp = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+	for _, e in ipairs(ef:GetChildren()) do
+		local hum = e:FindFirstChildOfClass("Humanoid")
+		local hd = e:FindFirstChild("Head")
+		if hum and hum.Health > 0 and hd then
+			if VisualAimbot.WallCheck and not IsVisible(hd) then continue end
+			local hp, on = camera:WorldToViewportPoint(hd.Position)
+			if on then
+				local d = (Vector2.new(hp.X, hp.Y) - mp).Magnitude
+				if d < sd then sd = d; cl = hd end
+			end
+		end
 	end
+	return cl
+end
 
-	loading = true
-
-	if reset then
-		clearItems()
-
-		scroll.Visible = true
-		bodyFrame.Visible = false
-		partSelector.Visible = false
-
-		if currentAssetType == "Body" then
-			scroll.Visible = false
-			bodyFrame.Visible = true
-			partSelector.Visible = true
-
-			for _, v in ipairs(bodyScroll:GetChildren()) do
-				if v:IsA("TextButton") then
-					v:Destroy()
-				end
-			end
-
-			local function Apply(color)
-				local character = player.Character
-				if not character then
-					return
-				end
-
-				local Groups = {
-					["头部"] = { "Head" },
-					["躯干"] = { "UpperTorso", "LowerTorso" },
-					["左臂"] = { "LeftUpperArm", "LeftLowerArm", "LeftHand" },
-					["右臂"] = { "RightUpperArm", "RightLowerArm", "RightHand" },
-					["左腿"] = { "LeftUpperLeg", "LeftLowerLeg", "LeftFoot" },
-					["右腿"] = { "RightUpperLeg", "RightLowerLeg", "RightFoot" },
-				}
-
-				if character:FindFirstChild("UpperTorso") then
-					if SelectedBodyPart == "全部" then
-						for _, parts in pairs(Groups) do
-							for _, name in ipairs(parts) do
-								local p = character:FindFirstChild(name)
-								if p then
-									p.Color = color
-								end
-							end
-						end
-					else
-						for _, name in ipairs(Groups[SelectedBodyPart] or {}) do
-							local p = character:FindFirstChild(name)
-							if p then
-								p.Color = color
-							end
-						end
-					end
-				else
-					if SelectedBodyPart == "全部" then
-						for _, name in ipairs({
-							"Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"
-						}) do
-							local p = character:FindFirstChild(name)
-							if p then
-								p.Color = color
-							end
-						end
-					else
-						local p = character:FindFirstChild(SelectedBodyPart)
-						if p then
-							p.Color = color
-						end
-					end
-				end
-
-				AutoSaveOutfit()
-			end
-
-			for _, color in ipairs(BodyColors) do
-				local b = Instance.new("TextButton")
-				b.Size = UDim2.new(0, 50, 0, 50)
-				b.BackgroundColor3 = color
-				b.Text = ""
-				b.Parent = bodyScroll
-
-				Instance.new("UICorner", b)
-
-				b.MouseButton1Click:Connect(function()
-					Apply(color)
-				end)
-			end
-
-			loading = false
-			return
-		end
-
-		if currentAssetType == "Outfits" then
-			clearItems()
-			scroll.CanvasPosition = Vector2.zero
-
-			local save = Instance.new("TextButton")
-			save.Size = UDim2.new(0, 220, 0, 40)
-			save.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-			save.Text = "保存当前装扮"
-			save.TextColor3 = Color3.new(1, 1, 1)
-			save.Font = Enum.Font.GothamBold
-			save.TextSize = 16
-			save.Parent = scroll
-
-			Instance.new("UICorner", save)
-
-			save.MouseButton1Click:Connect(function()
-				table.insert(SavedOutfits, {
-					Name = "装扮 " .. #SavedOutfits + 1,
-					Data = GetCurrentOutfit()
-				})
-
-				SaveOutfits()
-				loadMore(true)
-			end)
-
-			for i, outfit in ipairs(SavedOutfits) do
-				local row = Instance.new("Frame")
-				row.Size = UDim2.new(0, 260, 0, 75)
-				row.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-				row.Parent = scroll
-				Instance.new("UICorner", row)
-
-				local label = Instance.new("TextLabel")
-				label.Size = UDim2.new(1, -10, 0, 28)
-				label.Position = UDim2.new(0, 5, 0, 3)
-				label.BackgroundTransparency = 1
-				label.Text = outfit.Name
-				label.TextColor3 = Color3.new(1, 1, 1)
-				label.Font = Enum.Font.GothamBold
-				label.TextSize = 15
-				label.TextXAlignment = Enum.TextXAlignment.Center
-				label.Parent = row
-
-				local equip = Instance.new("TextButton")
-				equip.Size = UDim2.new(.45, -5, 0, 30)
-				equip.Position = UDim2.new(0.03, 0, 0, 38)
-				equip.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
-				equip.Text = "穿戴"
-				equip.TextColor3 = Color3.new(1, 1, 1)
-				equip.Font = Enum.Font.GothamBold
-				equip.TextSize = 14
-				equip.Parent = row
-				Instance.new("UICorner", equip)
-
-				local delete = Instance.new("TextButton")
-				delete.Size = UDim2.new(.45, -5, 0, 30)
-				delete.Position = UDim2.new(.52, 0, 0, 38)
-				delete.BackgroundColor3 = Color3.fromRGB(170, 60, 60)
-				delete.Text = "删除"
-				delete.TextColor3 = Color3.new(1, 1, 1)
-				delete.Font = Enum.Font.GothamBold
-				delete.TextSize = 14
-				delete.Parent = row
-				Instance.new("UICorner", delete)
-
-				equip.MouseButton1Click:Connect(function()
-					LoadSavedOutfit(outfit.Data)
-				end)
-
-				delete.MouseButton1Click:Connect(function()
-					table.remove(SavedOutfits, i)
-					SaveOutfits()
-					loadMore(true)
-				end)
-			end
-
-			loading = false
-			return
-		end
-
-		if currentAssetType == "Settings" then
-			clearItems()
-			scroll.CanvasPosition = Vector2.zero
-
-			local container = Instance.new("Frame")
-			container.Size = UDim2.new(1, 0, 0, 50)
-			container.BackgroundTransparency = 1
-			container.Parent = scroll
-
-			local label = Instance.new("TextLabel")
-			label.Size = UDim2.new(0, 160, 0, 35)
-			label.Position = UDim2.new(0, 10, 0, 5)
-			label.BackgroundTransparency = 1
-			label.Text = "自动加载角色装扮"
-			label.TextXAlignment = Enum.TextXAlignment.Left
-			label.Font = Enum.Font.GothamBold
-			label.TextSize = 16
-			label.TextColor3 = Color3.new(1, 1, 1)
-			label.Parent = container
-
-			local toggle = Instance.new("TextButton")
-			toggle.Size = UDim2.new(0, 32, 0, 32)
-			toggle.Position = UDim2.new(0, 180, 0, 7)
-			toggle.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-			toggle.Text = Settings.AutoLoad and "✓" or ""
-			toggle.TextColor3 = Color3.fromRGB(0, 255, 0)
-			toggle.Font = Enum.Font.GothamBold
-			toggle.TextSize = 22
-			toggle.Parent = container
-
-			Instance.new("UICorner", toggle)
-
-			toggle.MouseButton1Click:Connect(function()
-				Settings.AutoLoad = not Settings.AutoLoad
-				toggle.Text = Settings.AutoLoad and "✓" or ""
-				SaveSettings()
-			end)
-
-			scroll.CanvasSize = UDim2.new(0, 0, 0, 60)
-			loading = false
-			return
-		end
-
-		if currentAssetType == "Bundles" then
-			clearItems()
-
-			for _, folder in ipairs(BundlesContainer:GetChildren()) do
-				local button = Instance.new("ImageButton")
-				button.Size = UDim2.new(0, 80, 0, 100)
-				button.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-				button.Parent = scroll
-				Instance.new("UICorner", button).CornerRadius = UDim.new(0, 8)
-
-				local label = Instance.new("TextLabel")
-				label.Size = UDim2.new(1, 0, 1, 0)
-				label.BackgroundTransparency = 1
-				label.TextScaled = true
-				label.Text = folder.Name
-				label.TextColor3 = Color3.new(1, 1, 1)
-				label.Parent = button
-
-				button.MouseButton1Click:Connect(function()
-					openBundle(folder)
-				end)
-			end
-
-			loading = false
-			return
-		end
-
-		local params = CatalogSearchParams.new()
-		params.SearchKeyword = currentQuery
-		params.AssetTypes = { currentAssetType }
-		catalogPages = AvatarEditorService:SearchCatalog(params)
+RunService.RenderStepped:Connect(function()
+	if VisualAimbot.ShowFOV then
+		FOVCircle.Position = Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+		FOVCircle.Radius = VisualAimbot.Radius
+		FOVCircle.Visible = true
 	else
-		if catalogPages then
-			pcall(function()
-				catalogPages:AdvanceToNextPageAsync()
+		FOVCircle.Visible = false
+	end
+	if not VisualAimbot.Enabled or not isAlive() then return end
+	local t = getClosestEnemy()
+	if t then
+		local look = CFrame.lookAt(camera.CFrame.Position, t.Position)
+		camera.CFrame = camera.CFrame:Lerp(look, 1 - (1 / VisualAimbot.Smooth))
+	end
+end)
+
+local CombatGroup = Tabs.Combat:AddLeftGroupbox("视觉自瞄（手机常驻）", "target")
+
+CombatGroup:AddToggle("AimbotToggle", {
+	Text = "启用视觉自瞄",
+	Default = false,
+})
+Toggles.AimbotToggle:OnChanged(function(v) VisualAimbot.Enabled = v end)
+
+CombatGroup:AddToggle("AimbotWallCheck", {
+	Text = "墙壁检测",
+	Default = false,
+})
+Toggles.AimbotWallCheck:OnChanged(function(v) VisualAimbot.WallCheck = v end)
+
+CombatGroup:AddToggle("FOVToggle", {
+	Text = "显示FOV圈",
+	Default = false,
+})
+Toggles.FOVToggle:OnChanged(function(v) VisualAimbot.ShowFOV = v end)
+
+CombatGroup:AddSlider("FOVSlider", {
+	Text = "FOV半径",
+	Default = 100,
+	Min = 10,
+	Max = 500,
+	Rounding = 0,
+	Suffix = "px",
+})
+Options.FOVSlider:OnChanged(function(v) VisualAimbot.Radius = v end)
+
+CombatGroup:AddSlider("AimbotSmoothing", {
+	Text = "平滑度",
+	Default = 3,
+	Min = 1,
+	Max = 10,
+	Rounding = 0,
+})
+Options.AimbotSmoothing:OnChanged(function(v) VisualAimbot.Smooth = v end)
+
+
+local Hitbox = { Enabled = false, Size = 3 }
+local originalHeadSizes = {}
+
+local HitboxGroup = Tabs.Combat:AddLeftGroupbox("命中框扩大", "target")
+HitboxGroup:AddToggle("HitboxToggle", {
+	Text = "启用命中框扩大",
+	Default = false,
+})
+Toggles.HitboxToggle:OnChanged(function(v) Hitbox.Enabled = v end)
+
+HitboxGroup:AddSlider("HitboxSize", {
+	Text = "大小",
+	Default = 3,
+	Min = 1,
+	Max = 3,
+	Rounding = 1,
+})
+Options.HitboxSize:OnChanged(function(v) Hitbox.Size = v end)
+
+task.spawn(function()
+	while task.wait(0.5) do
+		local ef = getEnemyFolder()
+		if ef then
+			for _, e in ipairs(ef:GetChildren()) do
+				local hd = e:FindFirstChild("Head")
+				local hm = e:FindFirstChildOfClass("Humanoid")
+				if hd and hm and hm.Health > 0 then
+					if not originalHeadSizes[hd] then originalHeadSizes[hd] = hd.Size end
+					if Hitbox.Enabled then
+						hd.Size = Vector3.new(Hitbox.Size, Hitbox.Size, Hitbox.Size)
+						hd.CanCollide = false
+						hd.Transparency = 0.5
+					else
+						hd.Size = originalHeadSizes[hd] or Vector3.new(2, 2, 1)
+						hd.Transparency = 0
+					end
+				end
+			end
+		end
+	end
+end)
+
+
+local Bhop = { Enabled = false }
+local SpeedHack = { Enabled = false, Value = 0.5 }
+
+local MovementGroup = Tabs.Combat:AddLeftGroupbox("移动", "activity")
+
+MovementGroup:AddToggle("BhopToggle", {
+	Text = "连跳",
+	Default = false,
+})
+Toggles.BhopToggle:OnChanged(function(v) Bhop.Enabled = v end)
+
+RunService.RenderStepped:Connect(function()
+	if Bhop.Enabled and isAlive() then
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		if hum and hum:GetState() ~= Enum.HumanoidStateType.Jumping
+			and hum:GetState() ~= Enum.HumanoidStateType.Freefall then
+			hum.Jump = true
+		end
+	end
+end)
+
+MovementGroup:AddToggle("SpeedHackEnabled", {
+	Text = "加速",
+	Default = false,
+})
+Toggles.SpeedHackEnabled:OnChanged(function(v) SpeedHack.Enabled = v end)
+
+MovementGroup:AddSlider("SpeedHackValue", {
+	Text = "加速倍率",
+	Default = 0.5,
+	Min = 0.1,
+	Max = 1,
+	Rounding = 1,
+})
+Options.SpeedHackValue:OnChanged(function(v) SpeedHack.Value = v end)
+
+
+local scriptRunning = false
+local selectedKnife = "Butterfly Knife"
+local spawned = false
+local inspecting = false
+local swinging = false
+local lastAttackTime = 0
+local ATTACK_COOLDOWN = 1
+local ACTION_INSPECT = "InspectKnifeAction"
+local ACTION_ATTACK = "AttackKnifeAction"
+
+pcall(function()
+	RS.Assets.Weapons.Karambit.Camera.ViewmodelLight.Transparency = 1
+end)
+
+local knives = {
+	["Karambit"] = { Offset = CFrame.new(0, -1.5, 1.5) },
+	["Butterfly Knife"] = { Offset = CFrame.new(0, -1.5, 1.5) },
+	["M9 Bayonet"] = { Offset = CFrame.new(0, -1.5, 1) },
+	["Flip Knife"] = { Offset = CFrame.new(0, -1.5, 1.25) },
+	["Gut Knife"] = { Offset = CFrame.new(0, -1.5, 0.5) },
+	["Stiletto Knife"] = { Offset = CFrame.new(0, -1.5, 1.25) },
+	["Skeleton Knife"] = { Offset = CFrame.new(0, -1.5, 1.25) },
+}
+
+local vm, animator
+local equipAnim, idleAnim, inspectAnim, HeavySwingAnim, Swing1Anim, Swing2Anim
+
+local function getKnifeInCamera()
+	return camera:FindFirstChild("T Knife") or camera:FindFirstChild("CT Knife")
+end
+
+local function cleanPart(p)
+	if p:IsA("BasePart") then
+		p.CanCollide, p.Anchored, p.CastShadow, p.CanTouch, p.CanQuery = false, false, false, false, false
+	end
+end
+
+local function disableCollisions(m)
+	for _, p in m:GetDescendants() do cleanPart(p) end
+end
+
+local function hideOriginalKnife(k)
+	for _, p in k:GetDescendants() do
+		if p:IsA("BasePart") or p:IsA("MeshPart") or p:IsA("Texture") then
+			p.Transparency = 1
+		end
+	end
+end
+
+local function playSound(folder, name)
+	local ws = RS.Sounds:FindFirstChild(selectedKnife)
+	if not ws then return end
+	local s = ws:WaitForChild(folder):WaitForChild(name):Clone()
+	s.Parent = camera
+	s:Play()
+	s.Ended:Once(function() s:Destroy() end)
+	return s
+end
+
+local function attachAsset(folder, armPart, assetModel, finalName, offset)
+	local arm = vm:FindFirstChild(armPart)
+	if not arm then return end
+	local mesh = folder:WaitForChild(assetModel):Clone()
+	cleanPart(mesh)
+	mesh.Name = finalName
+	mesh.Parent = arm
+	local motor = Instance.new("Motor6D")
+	motor.Part0, motor.Part1, motor.C0, motor.Parent = arm, mesh, offset, arm
+end
+
+local function handleAction(actionName, inputState, inputObject)
+	if inputState ~= Enum.UserInputState.Begin or not spawned or not animator or not isAlive() then
+		return Enum.ContextActionResult.Pass
+	end
+	if actionName == ACTION_ATTACK then
+		local ct = os.clock()
+		if (equipAnim and equipAnim.IsPlaying) or (ct - lastAttackTime < ATTACK_COOLDOWN) then
+			return Enum.ContextActionResult.Pass
+		end
+		lastAttackTime = ct
+		swinging = true
+		if idleAnim then idleAnim:Stop() end
+		local anims = { HeavySwingAnim, Swing1Anim, Swing2Anim }
+		local chosen = anims[math.random(1, #anims)]
+		local sf = (chosen == HeavySwingAnim and "HitOne") or (chosen == Swing1Anim and "HitTwo") or "HitThree"
+		chosen:Play()
+		local s = playSound(sf, "1")
+		if s then s.Volume = 5 end
+		chosen.Stopped:Once(function() swinging = false end)
+	end
+	return Enum.ContextActionResult.Pass
+end
+
+local function removeViewmodel()
+	spawned = false
+	CAS:UnbindAction(ACTION_INSPECT)
+	CAS:UnbindAction(ACTION_ATTACK)
+	if vm then vm:Destroy() vm = nil end
+	animator, inspecting, swinging = nil, false, false
+end
+
+local function spawnViewmodel()
+	if spawned or not scriptRunning then return end
+	local myModel = isAlive()
+	if not myModel then return end
+	spawned = true
+	local knifeTemplate = RS.Assets.Weapons:WaitForChild(selectedKnife)
+	local knifeOffset = knives[selectedKnife].Offset
+	vm = knifeTemplate:WaitForChild("Camera"):Clone()
+	vm.Name, vm.Parent = selectedKnife, camera
+	disableCollisions(vm)
+
+	local ac = vm:FindFirstChildOfClass("AnimationController") or vm:FindFirstChildOfClass("Animator")
+	animator = ac:FindFirstChildWhichIsA("Animator") or ac
+	local af = RS.Assets.WeaponAnimations:WaitForChild(selectedKnife):WaitForChild("CameraAnimations")
+	equipAnim = animator:LoadAnimation(af:WaitForChild("Equip"))
+	idleAnim = animator:LoadAnimation(af:WaitForChild("Idle"))
+	HeavySwingAnim = animator:LoadAnimation(af:WaitForChild("Heavy Swing"))
+	Swing1Anim = animator:LoadAnimation(af:WaitForChild("Swing1"))
+	Swing2Anim = animator:LoadAnimation(af:WaitForChild("Swing2"))
+
+	vm:SetPrimaryPartCFrame(camera.CFrame * CFrame.new(0, -1.5, 5))
+	TweenService:Create(vm.PrimaryPart, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), { CFrame = camera.CFrame * knifeOffset }):Play()
+	equipAnim:Play()
+	playSound("Equip", "1")
+
+	-- 手机版：用触摸/点击触发攻击
+	CAS:BindAction(ACTION_ATTACK, handleAction, false, Enum.UserInputType.Touch)
+	CAS:BindAction(ACTION_ATTACK, handleAction, false, Enum.UserInputType.MouseButton1)
+end
+
+RunService.RenderStepped:Connect(function()
+	if not scriptRunning or not vm or not vm.PrimaryPart then return end
+	vm.PrimaryPart.CFrame = camera.CFrame * knives[selectedKnife].Offset
+	if not (equipAnim and equipAnim.IsPlaying) and not inspecting and not swinging then
+		if idleAnim and not idleAnim.IsPlaying then idleAnim:Play() end
+	end
+end)
+
+task.spawn(function()
+	while task.wait(0.1) do
+		local living = isAlive()
+		local currentKnife = getKnifeInCamera()
+		if scriptRunning and living and currentKnife and not spawned then
+			spawnViewmodel(currentKnife)
+		elseif (not scriptRunning or not currentKnife or not living) and spawned then
+			removeViewmodel()
+		end
+	end
+end)
+
+local KnifeGroup = Tabs.Skins:AddRightGroupbox("自定义刀子", "swords")
+KnifeGroup:AddToggle("KnifeToggle", {
+	Text = "启用自定义刀子",
+	Default = false,
+})
+Toggles.KnifeToggle:OnChanged(function(v)
+	scriptRunning = v
+	if not v then removeViewmodel() end
+end)
+
+KnifeGroup:AddDropdown("KnifeDropdown", {
+	Values = {"Butterfly Knife", "Karambit", "M9 Bayonet", "Flip Knife", "Gut Knife", "Stiletto Knife", "Skeleton Knife"},
+	Default = "Butterfly Knife",
+	Text = "选择自定义刀子",
+})
+Options.KnifeDropdown:OnChanged(function(v)
+	selectedKnife = v
+	if spawned then removeViewmodel() end
+end)
+
+
+local SkinChangerEnabled = false
+local SelectedSkins = {}
+local COOLDOWN = 0.1
+local WEAR = "Factory New"
+
+local SkinsFolder = RS:WaitForChild("Assets"):WaitForChild("Skins")
+
+local function getAllSkins(f)
+	local s = {}
+	for _, sk in f:GetChildren() do
+		table.insert(s, sk.Name)
+	end
+	return s
+end
+
+local function applyWeaponSkin(model)
+	if not model or not SkinChangerEnabled or not isAlive() then return end
+	local skinName = SelectedSkins[model.Name]
+	if not skinName then return end
+	pcall(function()
+		local skinFolder = SkinsFolder:FindFirstChild(model.Name)
+		if not skinFolder then return end
+		local skinType = skinFolder:FindFirstChild(skinName)
+		local sourceFolder = skinType and skinType:FindFirstChild("Camera") and skinType.Camera:FindFirstChild(WEAR)
+		if not sourceFolder then return end
+		local wf = model:FindFirstChild("Weapon")
+		if wf then
+			for _, part in wf:GetDescendants() do
+				if part:IsA("BasePart") then
+					local ns = sourceFolder:FindFirstChild(part.Name)
+					if ns then
+						local ex = part:FindFirstChildOfClass("SurfaceAppearance")
+						if ex then ex:Destroy() end
+						local c = ns:Clone()
+						c.Name, c.Parent = "SurfaceAppearance", part
+					end
+				end
+			end
+		end
+		model:SetAttribute("SkinApplied", skinName)
+	end)
+end
+
+local SkinsGroup = Tabs.Skins:AddLeftGroupbox("皮肤修改器", "palette")
+
+SkinsGroup:AddToggle("SkinChangerToggle", {
+	Text = "启用皮肤修改器",
+	Default = false,
+})
+Toggles.SkinChangerToggle:OnChanged(function(v)
+	SkinChangerEnabled = v
+	if not v then
+		for _, obj in camera:GetChildren() do
+			obj:SetAttribute("SkinApplied", nil)
+		end
+	end
+end)
+
+local SkinsRightGroup = Tabs.Skins:AddRightGroupbox("武器皮肤", "palette")
+
+local KNIVES = {["Karambit"]=true,["Butterfly Knife"]=true,["M9 Bayonet"]=true,["Flip Knife"]=true,["Gut Knife"]=true,["T Knife"]=true,["CT Knife"]=true,["Stiletto Knife"]=true,["Skeleton Knife"]=true}
+local GLOVES = {["Sports Gloves"]=true}
+
+for name in pairs(KNIVES) do
+	local folder = SkinsFolder:FindFirstChild(name)
+	if folder then
+		local options = getAllSkins(folder)
+		if #options > 0 then
+			SelectedSkins[name] = options[1]
+			SkinsRightGroup:AddDropdown("Skin_" .. name:gsub("%W", ""), {
+				Values = options,
+				Default = options[1],
+				Text = name,
+			})
+			Options["Skin_" .. name:gsub("%W", "")]:OnChanged(function(v)
+				SelectedSkins[name] = v
 			end)
 		end
 	end
-
-	if not catalogPages then
-		loading = false
-		return
-	end
-
-	local items = catalogPages:GetCurrentPage()
-	for _, item in ipairs(items) do
-		addItem(item)
-	end
-
-	scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y)
-	loading = false
 end
 
-currentQuery = ""
-loadMore(true)
-updateWearing()
-AutoSaveOutfit()
-
-addCategoryButton("上衣", Enum.AvatarAssetType.Shirt)
-addCategoryButton("裤子", Enum.AvatarAssetType.Pants)
-addCategoryButton("T恤", Enum.AvatarAssetType.TShirt)
-addCategoryButton("头发", Enum.AvatarAssetType.HairAccessory)
-addCategoryButton("脸饰", Enum.AvatarAssetType.FaceAccessory)
-addCategoryButton("脖子", Enum.AvatarAssetType.NeckAccessory)
-addCategoryButton("肩膀", Enum.AvatarAssetType.ShoulderAccessory)
-addCategoryButton("胸前", Enum.AvatarAssetType.FrontAccessory)
-addCategoryButton("背部", Enum.AvatarAssetType.BackAccessory)
-addCategoryButton("腰部", Enum.AvatarAssetType.WaistAccessory)
-addCategoryButton("帽子", Enum.AvatarAssetType.Hat)
-addCategoryButton("套装包", "Bundles")
-addCategoryButton("身体颜色", "Body")
-addCategoryButton("我的装扮", "Outfits")
-addCategoryButton("设置", "Settings")
-
-scroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
-	if loading then
-		return
-	end
-
-	if scroll.CanvasPosition.Y >= scroll.AbsoluteCanvasSize.Y - scroll.AbsoluteWindowSize.Y - 150 then
-		loadMore(false)
-	end
+camera.ChildAdded:Connect(function(obj)
+	if not SkinChangerEnabled or not isAlive() then return end
+	task.wait(COOLDOWN)
+	applyWeaponSkin(obj)
 end)
 
-local searchThread = 0
-searchBar:GetPropertyChangedSignal("Text"):Connect(function()
-	searchThread += 1
-	local id = searchThread
 
-	task.wait(0.4)
-	if id ~= searchThread then
-		return
-	end
+local colorPresets = {"白色","红色","绿色","蓝色","黄色","青色","紫色","橙色","黑色"}
+local colorValues = {
+	["白色"] = Color3.fromRGB(255, 255, 255),
+	["红色"] = Color3.fromRGB(255, 0, 0),
+	["绿色"] = Color3.fromRGB(0, 255, 0),
+	["蓝色"] = Color3.fromRGB(0, 0, 255),
+	["黄色"] = Color3.fromRGB(255, 255, 0),
+	["青色"] = Color3.fromRGB(0, 255, 255),
+	["紫色"] = Color3.fromRGB(128, 0, 128),
+	["橙色"] = Color3.fromRGB(255, 165, 0),
+	["黑色"] = Color3.fromRGB(0, 0, 0),
+}
 
-	currentQuery = searchBar.Text
-	loadMore(true)
-end)
+local Config = {
+	ESP = {
+		Enabled = false,
+		TeamCheck = true,
+		VisibilityCheck = true,
+		MaxDistance = 2000,
+		Box = true,
+		BoxThickness = 1,
+		Name = true,
+		NameSize = 13,
+		Health = true,
+		Skeleton = false,
+		SkeletonThickness = 2,
+		Highlight = true,
+		Distance = true,
+		BoxColor = Color3.fromRGB(255, 255, 255),
+		BoxVisibleColor = Color3.fromRGB(0, 255, 0),
+		BoxNotVisibleColor = Color3.fromRGB(255, 0, 0),
+		NameColor = Color3.fromRGB(255, 255, 255),
+		HealthBarColor = Color3.fromRGB(0, 255, 0),
+		DistanceColor = Color3.fromRGB(255, 255, 255),
+		HighlightFill = Color3.fromRGB(255, 0, 0),
+		HighlightOutline = Color3.fromRGB(255, 255, 255),
+		HighlightVisibleFill = Color3.fromRGB(0, 255, 0),
+		HighlightHiddenFill = Color3.fromRGB(255, 0, 0),
+	},
+}
 
-clearSearchBtn.MouseButton1Click:Connect(function()
-	searchBar.Text = ""
-end)
+local drawings = {}
+local highlights = {}
 
-local dragging, dragInput, dragStart, startPos
-
-local function update(input)
-	local delta = input.Position - dragStart
-	frame.Position = UDim2.new(
-		startPos.X.Scale,
-		startPos.X.Offset + delta.X,
-		startPos.Y.Scale,
-		startPos.Y.Offset + delta.Y
-	)
-end
-
-frame.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 and frame.Visible then
-		dragging = true
-		dragStart = input.Position
-		startPos = frame.Position
-
-		input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then
-				dragging = false
+local function newDrawing(drawType, props)
+	local s, d = pcall(function()
+		local dr = Drawing.new(drawType)
+		if dr and type(dr) ~= "number" then
+			for k, v in pairs(props) do
+				pcall(function() dr[k] = v end)
 			end
-		end)
+			return dr
+		end
+	end)
+	if s and d and type(d) ~= "number" then
+		table.insert(drawings, d)
+		return d
 	end
-end)
-
-frame.InputChanged:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseMovement then
-		dragInput = input
-	end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-	if input == dragInput and dragging then
-		update(input)
-	end
-end)
-
-local minimizeBtn = Instance.new("TextButton")
-minimizeBtn.Size = UDim2.new(0, 50, 0, 50)
-minimizeBtn.Position = UDim2.new(0, 20, 1, -70)
-minimizeBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-minimizeBtn.Text = "目录"
-minimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-minimizeBtn.Font = Enum.Font.GothamBold
-minimizeBtn.TextSize = 16
-minimizeBtn.Visible = false
-minimizeBtn.Parent = gui
-
-local minimizeCorner = Instance.new("UICorner", minimizeBtn)
-minimizeCorner.CornerRadius = UDim.new(1, 0)
-
-minimizeBtn.MouseEnter:Connect(function()
-	minimizeBtn.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
-end)
-
-minimizeBtn.MouseLeave:Connect(function()
-	minimizeBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-end)
-
-minimizeBtn.MouseButton1Click:Connect(function()
-	minimized = false
-	frame.Visible = true
-	minimizeBtn.Visible = false
-end)
-
-local minimized = false
-
-closeBtn.MouseButton1Click:Connect(function()
-	minimized = true
-	frame.Visible = false
-	minimizeBtn.Visible = true
-end)
-
-local draggingMin, dragInputMin, dragStartMin, startPosMin
-
-local function updateMin(input)
-	local delta = input.Position - dragStartMin
-	minimizeBtn.Position = UDim2.new(
-		startPosMin.X.Scale,
-		startPosMin.X.Offset + delta.X,
-		startPosMin.Y.Scale,
-		startPosMin.Y.Offset + delta.Y
-	)
 end
 
-minimizeBtn.InputBegan:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 then
-		draggingMin = true
-		dragStartMin = input.Position
-		startPosMin = minimizeBtn.Position
+local BONES_R15 = {
+	{"Head","UpperTorso"},{"UpperTorso","LowerTorso"},{"LowerTorso","HumanoidRootPart"},
+	{"UpperTorso","LeftUpperArm"},{"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},
+	{"UpperTorso","RightUpperArm"},{"RightUpperArm","RightLowerArm"},{"RightLowerArm","RightHand"},
+	{"HumanoidRootPart","LeftUpperLeg"},{"LeftUpperLeg","LeftLowerLeg"},{"LeftLowerLeg","LeftFoot"},
+	{"HumanoidRootPart","RightUpperLeg"},{"RightUpperLeg","RightLowerLeg"},{"RightLowerLeg","RightFoot"},
+}
+local BONES_R6 = {
+	{"Head","Torso"},{"Torso","HumanoidRootPart"},{"Torso","Left Arm"},
+	{"Torso","Right Arm"},{"HumanoidRootPart","Left Leg"},{"HumanoidRootPart","Right Leg"},
+}
 
-		input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then
-				draggingMin = false
+local espRayParams = RaycastParams.new()
+espRayParams.FilterType = Enum.RaycastFilterType.Exclude
+espRayParams.IgnoreWater = true
+
+local function espIsVisible(originChar, targetChar)
+	if not originChar or not targetChar or not targetChar.Parent then return true end
+	local origin = originChar:FindFirstChild("Head") or originChar.PrimaryPart or originChar:FindFirstChild("HumanoidRootPart")
+	if not origin then return true end
+	pcall(function() espRayParams.FilterDescendantsInstances = {originChar, targetChar} end)
+	for _, partName in ipairs({"Head","HumanoidRootPart"}) do
+		local part = targetChar:FindFirstChild(partName)
+		if part and part:IsA("BasePart") then
+			local dir = part.Position - origin.Position
+			if dir.Magnitude > 1 then
+				local ray = Workspace:Raycast(origin.Position, dir.Unit * (dir.Magnitude - 0.5), espRayParams)
+				if not ray then return true end
 			end
-		end)
+		end
+	end
+	return false
+end
+
+local playerESP = {}
+
+local function createPlayerESP()
+	local e = { Box = {}, BoxOutline = {}, Skeleton = {}, Fill = {}, LastVisCheck = 0, IsVisible = false }
+	for i = 1, 4 do
+		e.BoxOutline[i] = newDrawing("Line", { Thickness = 3, Color = Color3.new(0, 0, 0), Visible = false, ZIndex = 1 })
+		e.Box[i] = newDrawing("Line", { Thickness = 1, Visible = false, ZIndex = 2 })
+	end
+	for i = 1, 20 do
+		e.Skeleton[i] = newDrawing("Line", { Thickness = 2, Visible = false })
+	end
+	e.HpBg = newDrawing("Line", { Thickness = 2, Visible = false, Color = Color3.new(0, 0, 0), Transparency = 0.5, ZIndex = 2 })
+	e.Hp = newDrawing("Line", { Thickness = 2, Visible = false, ZIndex = 3 })
+	e.Name = newDrawing("Text", { Size = 13, Center = true, Outline = true, Font = 2, Visible = false })
+	e.Dist = newDrawing("Text", { Size = 11, Center = true, Outline = true, Font = 2, Visible = false })
+
+	local hl = Instance.new("Highlight")
+	hl.FillTransparency = 0.5
+	hl.OutlineTransparency = 0
+	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	hl.Enabled = false
+	hl.Parent = CoreGui
+	e.HL = hl
+	table.insert(highlights, hl)
+
+	return e
+end
+
+local function hidePlayerESP(e)
+	if not e then return end
+	for _, d in pairs(e.Box) do if d then d.Visible = false end end
+	for _, d in pairs(e.BoxOutline) do if d then d.Visible = false end end
+	for _, d in pairs(e.Skeleton) do if d then d.Visible = false end end
+	if e.HpBg then e.HpBg.Visible = false end
+	if e.Hp then e.Hp.Visible = false end
+	if e.Name then e.Name.Visible = false end
+	if e.Dist then e.Dist.Visible = false end
+	if e.HL then e.HL.Enabled = false end
+end
+
+local function destroyPlayerESP(e)
+	hidePlayerESP(e)
+	if not e then return end
+	for _, list in pairs({ e.Box, e.BoxOutline, e.Skeleton }) do
+		for _, d in pairs(list) do
+			if d then pcall(function() d:Remove() end) end
+		end
+	end
+	if e.HpBg then pcall(function() e.HpBg:Remove() end) end
+	if e.Hp then pcall(function() e.Hp:Remove() end) end
+	if e.Name then pcall(function() e.Name:Remove() end) end
+	if e.Dist then pcall(function() e.Dist:Remove() end) end
+	if e.HL then pcall(function() e.HL:Destroy() end) end
+end
+
+Players.PlayerRemoving:Connect(function(p)
+	if playerESP[p] then destroyPlayerESP(playerESP[p]); playerESP[p] = nil end
+end)
+
+local VisGroup = Tabs.Visuals:AddLeftGroupbox("玩家 ESP", "eye")
+
+VisGroup:AddToggle("ESP.Enabled", {
+	Text = "启用 ESP",
+	Default = false,
+})
+Toggles["ESP.Enabled"]:OnChanged(function(v) Config.ESP.Enabled = v end)
+
+VisGroup:AddToggle("ESP.TeamCheck", {
+	Text = "团队检查",
+	Default = true,
+})
+Toggles["ESP.TeamCheck"]:OnChanged(function(v) Config.ESP.TeamCheck = v end)
+
+VisGroup:AddToggle("ESP.VisibilityCheck", {
+	Text = "可见性检查",
+	Default = true,
+})
+Toggles["ESP.VisibilityCheck"]:OnChanged(function(v) Config.ESP.VisibilityCheck = v end)
+
+VisGroup:AddSlider("ESP.MaxDistance", {
+	Text = "最大距离",
+	Default = 2000,
+	Min = 100,
+	Max = 5000,
+	Rounding = 0,
+})
+Options["ESP.MaxDistance"]:OnChanged(function(v) Config.ESP.MaxDistance = v end)
+
+VisGroup:AddToggle("ESP.Box", {
+	Text = "方框",
+	Default = true,
+})
+Toggles["ESP.Box"]:OnChanged(function(v) Config.ESP.Box = v end)
+
+VisGroup:AddToggle("ESP.Name", {
+	Text = "名称",
+	Default = true,
+})
+Toggles["ESP.Name"]:OnChanged(function(v) Config.ESP.Name = v end)
+
+VisGroup:AddToggle("ESP.Health", {
+	Text = "生命值条",
+	Default = true,
+})
+Toggles["ESP.Health"]:OnChanged(function(v) Config.ESP.Health = v end)
+
+VisGroup:AddToggle("ESP.Skeleton", {
+	Text = "骨骼",
+	Default = false,
+})
+Toggles["ESP.Skeleton"]:OnChanged(function(v) Config.ESP.Skeleton = v end)
+
+VisGroup:AddToggle("ESP.Highlight", {
+	Text = "高亮",
+	Default = true,
+})
+Toggles["ESP.Highlight"]:OnChanged(function(v) Config.ESP.Highlight = v end)
+
+VisGroup:AddToggle("ESP.Distance", {
+	Text = "距离",
+	Default = true,
+})
+Toggles["ESP.Distance"]:OnChanged(function(v) Config.ESP.Distance = v end)
+
+
+local lastESPUpdate = 0
+
+RunService.RenderStepped:Connect(function()
+	local now = tick()
+	local localChar = player.Character
+	if not localChar or not localChar.PrimaryPart then
+		for p, e in pairs(playerESP) do destroyPlayerESP(e); playerESP[p] = nil end
+		return
+	end
+	local localHuman = localChar:FindFirstChildWhichIsA("Humanoid")
+	if not localHuman or localHuman.Health <= 0 then return end
+	camera = workspace.CurrentCamera
+	if not camera then return end
+
+	-- 加速
+	if SpeedHack.Enabled and localChar then
+		local root = localChar:FindFirstChild("HumanoidRootPart")
+		if root then
+			local vel = root.AssemblyLinearVelocity
+			local horizontalVel = Vector3.new(vel.X, 0, vel.Z)
+			if horizontalVel.Magnitude > 0.1 then
+				local direction = horizontalVel.Unit
+				root.AssemblyLinearVelocity = Vector3.new(
+					direction.X * (16 + SpeedHack.Value * 50), vel.Y,
+					direction.Z * (16 + SpeedHack.Value * 50)
+				)
+			end
+		end
+	end
+
+	for p, e in pairs(playerESP) do
+		if not p.Parent then destroyPlayerESP(e); playerESP[p] = nil
+		else
+			local char = p.Character
+			if not char or not char.Parent then destroyPlayerESP(e); playerESP[p] = nil
+			else
+				local hum = char:FindFirstChildWhichIsA("Humanoid")
+				if not hum or hum.Health <= 0 then destroyPlayerESP(e); playerESP[p] = nil end
+			end
+		end
+	end
+
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= player then
+			local char = p.Character
+			if char and char:FindFirstChild("HumanoidRootPart") and char:FindFirstChildWhichIsA("Humanoid")
+				and char:FindFirstChildWhichIsA("Humanoid").Health > 0 then
+				if not playerESP[p] then playerESP[p] = createPlayerESP() end
+			end
+		end
+	end
+
+	if Config.ESP.Enabled and now - lastESPUpdate > 0.015 then
+		lastESPUpdate = now
+		local wtvp = camera.WorldToViewportPoint
+		local camPos = camera.CFrame.Position
+
+		for p, e in pairs(playerESP) do
+			local char = p.Character
+			if not char or not char.Parent then destroyPlayerESP(e); playerESP[p] = nil; continue end
+			local root = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
+			local hum = char:FindFirstChildWhichIsA("Humanoid")
+			if not root or not hum or hum.Health <= 0 then destroyPlayerESP(e); playerESP[p] = nil; continue end
+			if Config.ESP.TeamCheck and not isEnemy(p) then hidePlayerESP(e); continue end
+			local dist = (camPos - root.Position).Magnitude
+			if dist > Config.ESP.MaxDistance then hidePlayerESP(e); continue end
+			local rootScreen, onScreen = wtvp(camera, root.Position)
+			if not onScreen or rootScreen.Z <= 0 then hidePlayerESP(e); continue end
+
+			local headPart = char:FindFirstChild("Head")
+			local isVis = e.IsVisible
+			if Config.ESP.VisibilityCheck and (now - e.LastVisCheck > 0.1) then
+				isVis = espIsVisible(localChar, char)
+				e.IsVisible = isVis
+				e.LastVisCheck = now
+			elseif not Config.ESP.VisibilityCheck then
+				isVis = true
+			end
+
+			local rPos = root.Position
+			local hPos = headPart and headPart.Position or (rPos + Vector3.new(0, 2, 0))
+			local topScreen = wtvp(camera, hPos + Vector3.new(0, 0.5, 0))
+			local botScreen = wtvp(camera, rPos - Vector3.new(0, 3, 0))
+			if topScreen.Z <= 0 or botScreen.Z <= 0 then hidePlayerESP(e); continue end
+
+			local topY, botY = topScreen.Y, botScreen.Y
+			local sH = math.abs(botY - topY)
+			local sW = sH * 0.55
+			local cx = rootScreen.X
+			local tl = Vector2.new(cx - sW / 2, topY)
+			local tr = Vector2.new(cx + sW / 2, topY)
+			local bl = Vector2.new(cx - sW / 2, botY)
+			local br = Vector2.new(cx + sW / 2, botY)
+
+			if Config.ESP.Box then
+				local col = Config.ESP.VisibilityCheck
+					and (isVis and Config.ESP.BoxVisibleColor or Config.ESP.BoxNotVisibleColor)
+					or Config.ESP.BoxColor
+				if e.Box[1] then e.Box[1].From, e.Box[1].To, e.Box[1].Color, e.Box[1].Visible = tl, tr, col, true end
+				if e.Box[2] then e.Box[2].From, e.Box[2].To, e.Box[2].Color, e.Box[2].Visible = tr, br, col, true end
+				if e.Box[3] then e.Box[3].From, e.Box[3].To, e.Box[3].Color, e.Box[3].Visible = br, bl, col, true end
+				if e.Box[4] then e.Box[4].From, e.Box[4].To, e.Box[4].Color, e.Box[4].Visible = bl, tl, col, true end
+			else
+				for i = 1, 4 do if e.Box[i] then e.Box[i].Visible = false end end
+			end
+
+			local tY = tl.Y - 18
+			if Config.ESP.Name and e.Name then
+				e.Name.Size = Config.ESP.NameSize
+				e.Name.Text = p.Name
+				e.Name.Position = Vector2.new(cx, tY)
+				e.Name.Color = Config.ESP.NameColor
+				e.Name.Visible = true
+				tY = tY + Config.ESP.NameSize
+			elseif e.Name then
+				e.Name.Visible = false
+			end
+
+			if Config.ESP.Distance and e.Dist then
+				e.Dist.Text = math.floor(dist) .. "m"
+				e.Dist.Position = Vector2.new(cx, bl.Y + 2)
+				e.Dist.Color = Config.ESP.DistanceColor
+				e.Dist.Visible = true
+			elseif e.Dist then
+				e.Dist.Visible = false
+			end
+
+			if Config.ESP.Health and hum then
+				local hp, mhp = hum.Health, hum.MaxHealth
+				if mhp <= 0 then mhp = 100 end
+				local hpF = math.clamp(hp / mhp, 0, 1)
+				local bx = tl.X - 5
+				local barH = sH * hpF
+				if e.HpBg then
+					e.HpBg.From, e.HpBg.To = Vector2.new(bx, bl.Y), Vector2.new(bx, tl.Y)
+					e.HpBg.Visible = true
+				end
+				if e.Hp then
+					e.Hp.From, e.Hp.To = Vector2.new(bx, bl.Y), Vector2.new(bx, bl.Y - barH)
+					e.Hp.Color = Config.ESP.HealthBarColor
+					e.Hp.Visible = true
+				end
+			else
+				if e.HpBg then e.HpBg.Visible = false end
+				if e.Hp then e.Hp.Visible = false end
+			end
+
+			if Config.ESP.Skeleton and hum and dist < 300 then
+				local skelCol = Config.ESP.BoxColor
+				local isR15 = char:FindFirstChild("UpperTorso") ~= nil
+				local bones = isR15 and BONES_R15 or BONES_R6
+				for i, pair in ipairs(bones) do
+					local ln = e.Skeleton[i]
+					if ln then
+						local p1, p2 = char:FindFirstChild(pair[1]), char:FindFirstChild(pair[2])
+						if p1 and p2 then
+							local s1 = wtvp(camera, p1.Position)
+							local s2 = wtvp(camera, p2.Position)
+							if s1.Z > 0 and s2.Z > 0 then
+								ln.Color = skelCol
+								ln.From = Vector2.new(s1.X, s1.Y)
+								ln.To = Vector2.new(s2.X, s2.Y)
+								ln.Thickness = Config.ESP.SkeletonThickness
+								ln.Visible = true
+							else
+								ln.Visible = false
+							end
+						else
+							ln.Visible = false
+						end
+					end
+				end
+			else
+				for _, ln in ipairs(e.Skeleton) do if ln then ln.Visible = false end end
+			end
+
+			if Config.ESP.Highlight and e.HL then
+				pcall(function()
+					e.HL.Adornee = char
+					e.HL.FillColor = Config.ESP.VisibilityCheck
+						and (isVis and Config.ESP.HighlightVisibleFill or Config.ESP.HighlightHiddenFill)
+						or Config.ESP.HighlightFill
+					e.HL.OutlineColor = Config.ESP.HighlightOutline
+					e.HL.Enabled = true
+				end)
+			elseif e.HL then
+				e.HL.Enabled = false
+			end
+		end
 	end
 end)
 
-player.CharacterAdded:Connect(function(character)
-	character:WaitForChild("Humanoid")
-	task.wait(0.2)
 
-	local head = character:FindFirstChild("Head")
-	if head then
-		local mesh = head:FindFirstChildOfClass("SpecialMesh")
-		originalHeadMesh = mesh and mesh:Clone() or nil
-	end
+local MenuGroup = Tabs["UI Settings"]:AddLeftGroupbox("菜单", "wrench")
 
-	updateWearing()
+MenuGroup:AddToggle("KeybindMenuOpen", {
+	Default = false,
+	Text = "打开快捷键菜单",
+	Callback = function(v) Library.KeybindFrame.Visible = v end,
+})
 
-	if Settings.AutoLoad and AutoSavedOutfit then
-		task.wait(1)
-		LoadSavedOutfit(AutoSavedOutfit)
-	end
+MenuGroup:AddToggle("ShowCustomCursor", {
+	Text = "自定义光标",
+	Default = true,
+	Callback = function(v) Library.ShowCustomCursor = v end,
+})
+
+MenuGroup:AddDropdown("NotificationSide", {
+	Values = {"Left", "Right"},
+	Default = "Right",
+	Text = "通知位置",
+	Callback = function(v) Library:SetNotifySide(v) end,
+})
+
+MenuGroup:AddDropdown("DPIDropdown", {
+	Values = {"50%", "75%", "100%", "125%", "150%", "175%", "200%"},
+	Default = "100%",
+	Text = "DPI缩放",
+	Callback = function(v)
+		v = v:gsub("%%", "")
+		Library:SetDPIScale(tonumber(v))
+	end,
+})
+
+MenuGroup:AddDivider()
+
+MenuGroup:AddLabel("菜单热键"):AddKeyPicker("MenuKeybind", {
+	Default = "RightShift",
+	NoUI = true,
+	Text = "菜单热键",
+})
+
+MenuGroup:AddButton("卸载脚本", function() Library:Unload() end)
+
+Library.ToggleKeybind = Options.MenuKeybind
+
+
+task.spawn(function()
+	task.wait(0.5)
+	pcall(function()
+		ThemeManager:SetLibrary(Library)
+		SaveManager:SetLibrary(Library)
+		SaveManager:IgnoreThemeSettings()
+		SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
+		ThemeManager:SetFolder("BloxstrikeMobile")
+		SaveManager:SetFolder("BloxstrikeMobile")
+		SaveManager:SetSubFolder("game")
+		SaveManager:BuildConfigSection(Tabs["UI Settings"])
+		ThemeManager:ApplyToTab(Tabs["UI Settings"])
+		SaveManager:LoadAutoloadConfig()
+	end)
 end)
 
-minimizeBtn.InputChanged:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseMovement then
-		dragInputMin = input
-	end
-end)
 
-UserInputService.InputChanged:Connect(function(input)
-	if input == dragInputMin and draggingMin then
-		updateMin(input)
-	end
-end)
+Library:OnUnload(function()
+	pcall(function() FOVCircle:Remove() end)
+	for _, d in ipairs(drawings) do pcall(function() d:Remove() end) end
+	for _, hl in ipairs(highlights) do pcall(function() hl:Destroy() end) end
+	if rageBot then pcall(function() rageBot:Destroy() end) end
+	print("已卸载")
+end)全部加到我的脚本里
